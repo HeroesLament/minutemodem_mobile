@@ -1,0 +1,38 @@
+[package]
+name = "phy_modem"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "phy_modem"
+# cdylib only on the dev host. mob_dev's mobile cross-compile path
+# adds `staticlib` via its own rustc invocations when targeting
+# aarch64-linux-android / aarch64-apple-ios; we don't list it here
+# because that triggers a Rustler 0.37 bug where both .a and .dylib
+# get copied to priv/native/<name>.so and "last write wins" breaks
+# host-dev dlopen on macOS.
+crate-type = ["cdylib"]
+
+[dependencies]
+# 0.37+ derives the static-NIF init symbol from CARGO_CRATE_NAME
+# (`<crate>_nif_init`), matching what Mob's driver_tab declares.
+rustler = "0.37"
+
+# DSP primitives (Complex, NCO, RRC, FixedTiming, constellation traits).
+# Used indirectly via milwave-rs but declared explicitly so the dep
+# tree is legible to `cargo tree` consumers.
+wavecore-rs = { git = "https://github.com/HeroesLament/wavecore-rs", branch = "main" }
+
+# MIL-STD-188-110D waveform engine: UnifiedModulator, UnifiedDemodulator,
+# DFE, WalshCorrelator, turbo_decode.
+milwave-rs = { git = "https://github.com/HeroesLament/milwave-rs", branch = "main" }
+
+# ─── DROP WHEN UPSTREAM RUSTLER MERGES THE ANDROID DLSYM FIX ───────────────
+# Rustler 0.37's nif_filler uses `dlopen(NULL)` to find `enif_*` symbols.
+# On Android (Bionic), that handle doesn't see the app's RTLD_GLOBAL-promoted
+# .so, so every NIF init panics with `undefined symbol: enif_priv_data`.
+# The GenericJam fork patches the Android branch to do `dladdr` +
+# `dlopen(self, RTLD_NOLOAD)` for an explicit self-handle. Other platforms
+# are unchanged. See https://github.com/GenericJam/mob/issues/7 .
+[patch.crates-io]
+rustler = { git = "https://github.com/GenericJam/rustler.git", branch = "genericjam-android-rtld-default" }

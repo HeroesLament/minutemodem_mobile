@@ -1,0 +1,41 @@
+# Elixir / Mix
+/_build/
+/cover/
+/deps/
+/doc/
+/.fetch
+erl_crash.dump
+*.ez
+*.beam
+/config/*.secret.exs
+.elixir_ls/
+
+# Native build artifacts
+priv/native/*.so
+priv/native/*.dylib
+priv/native/*.dll
+native/*/target/
+
+# Android local config (machine-specific)
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+android/captures/
+android/.externalNativeBuild/
+android/.cxx/
+
+# Firebase config — review case-by-case; treat as semi-secret
+# Uncomment if you don't want this in git:
+# android/app/google-services.json
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Local DB
+*.db
+*.db-shm
+*.db-wal
