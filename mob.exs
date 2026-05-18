@@ -14,7 +14,7 @@ config :mob_dev,
   elixir_lib: System.get_env("MOB_ELIXIR_LIB", :code.lib_dir(:elixir) |> to_string() |> Path.dirname())
 
 # Bundle ID for the app (used by Android applicationId + future iOS bundle identifier).
-config :mob_dev, bundle_id: "com.heroeslament.minutemodem"
+config :mob_dev, bundle_id: "com.example.minutemodem_mobile"
 
 # Statically-linked NIFs. mob_dev cross-compiles these into the app binary
 # at deploy time and generates priv/generated/driver_tab_*.zig so the
