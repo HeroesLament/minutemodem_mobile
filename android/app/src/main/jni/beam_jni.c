@@ -19,64 +19,64 @@ JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MainActivity_nativeSetActivity(JNIEnv* env, jobject thiz, jobject activity) {
+Java_com_example_minutemodem_1mobile_MainActivity_nativeSetActivity(JNIEnv* env, jobject thiz, jobject activity) {
     mob_init_bridge(env, activity);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MainActivity_nativeStartBeam(JNIEnv* env, jobject thiz) {
+Java_com_example_minutemodem_1mobile_MainActivity_nativeStartBeam(JNIEnv* env, jobject thiz) {
     mob_start_beam(APP_MODULE);
 }
 
 // Called from MobBridge.nativeSendTap(handle) in Kotlin when a button is tapped.
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeSendTap(JNIEnv* env, jclass cls, jint handle) {
+Java_com_example_minutemodem_1mobile_MobBridge_nativeSendTap(JNIEnv* env, jclass cls, jint handle) {
     mob_send_tap((int)handle);
 }
 
 // Called from MobBridge.nativeSendChangeStr/Bool/Float when an input widget changes.
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeSendChangeStr(JNIEnv* env, jclass cls, jint handle, jstring value) {
+Java_com_example_minutemodem_1mobile_MobBridge_nativeSendChangeStr(JNIEnv* env, jclass cls, jint handle, jstring value) {
     const char* utf8 = (*env)->GetStringUTFChars(env, value, NULL);
     mob_send_change_str((int)handle, utf8);
     (*env)->ReleaseStringUTFChars(env, value, utf8);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeSendChangeBool(JNIEnv* env, jclass cls, jint handle, jboolean value) {
+Java_com_example_minutemodem_1mobile_MobBridge_nativeSendChangeBool(JNIEnv* env, jclass cls, jint handle, jboolean value) {
     mob_send_change_bool((int)handle, (int)value);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeSendChangeFloat(JNIEnv* env, jclass cls, jint handle, jfloat value) {
+Java_com_example_minutemodem_1mobile_MobBridge_nativeSendChangeFloat(JNIEnv* env, jclass cls, jint handle, jfloat value) {
     mob_send_change_float((int)handle, (double)value);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeSendFocus(JNIEnv* env, jclass cls, jint handle) {
+Java_com_example_minutemodem_1mobile_MobBridge_nativeSendFocus(JNIEnv* env, jclass cls, jint handle) {
     mob_send_focus((int)handle);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeSendBlur(JNIEnv* env, jclass cls, jint handle) {
+Java_com_example_minutemodem_1mobile_MobBridge_nativeSendBlur(JNIEnv* env, jclass cls, jint handle) {
     mob_send_blur((int)handle);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeSendSubmit(JNIEnv* env, jclass cls, jint handle) {
+Java_com_example_minutemodem_1mobile_MobBridge_nativeSendSubmit(JNIEnv* env, jclass cls, jint handle) {
     mob_send_submit((int)handle);
 }
 
 // Called from MobBridge.nativeHandleBack() when the Android back gesture fires.
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeHandleBack(JNIEnv* env, jclass cls) {
+Java_com_example_minutemodem_1mobile_MobBridge_nativeHandleBack(JNIEnv* env, jclass cls) {
     mob_handle_back();
 }
 
 // Called from MobBridge.notifyColorSchemeChanged when MainActivity's
 // onConfigurationChanged sees a uiMode flip. `scheme` is "light" or "dark".
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeNotifyColorScheme(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeNotifyColorScheme(JNIEnv* env, jclass cls,
     jstring scheme) {
     if (!scheme) return;
     const char* utf8 = (*env)->GetStringUTFChars(env, scheme, NULL);
@@ -90,7 +90,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeNotifyColorScheme(JN
 // Called from MobBridge when async results are ready.
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverAtom2(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverAtom2(JNIEnv* env, jclass cls,
     jlong pid, jstring a1, jstring a2) {
     const char* ca1 = (*env)->GetStringUTFChars(env, a1, NULL);
     const char* ca2 = (*env)->GetStringUTFChars(env, a2, NULL);
@@ -100,7 +100,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverAtom2(JNIEnv*
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverAtom3(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverAtom3(JNIEnv* env, jclass cls,
     jlong pid, jstring a1, jstring a2, jstring a3) {
     const char* ca1 = (*env)->GetStringUTFChars(env, a1, NULL);
     const char* ca2 = (*env)->GetStringUTFChars(env, a2, NULL);
@@ -112,20 +112,20 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverAtom3(JNIEnv*
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverLocation(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverLocation(JNIEnv* env, jclass cls,
     jlong pid, jdouble lat, jdouble lon, jdouble acc, jdouble alt) {
     mob_deliver_location(pid, lat, lon, acc, alt);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverMotion(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverMotion(JNIEnv* env, jclass cls,
     jlong pid, jdouble ax, jdouble ay, jdouble az,
     jdouble gx, jdouble gy, jdouble gz, jlong ts) {
     mob_deliver_motion(pid, ax, ay, az, gx, gy, gz, (long long)ts);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverFileResult(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverFileResult(JNIEnv* env, jclass cls,
     jlong pid, jstring event, jstring sub, jstring json_items) {
     const char* ce  = (*env)->GetStringUTFChars(env, event, NULL);
     const char* cs  = (*env)->GetStringUTFChars(env, sub,   NULL);
@@ -137,7 +137,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverFileResult(JN
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverPushToken(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverPushToken(JNIEnv* env, jclass cls,
     jlong pid, jstring token) {
     const char* ct = (*env)->GetStringUTFChars(env, token, NULL);
     mob_deliver_push_token(pid, ct);
@@ -145,7 +145,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverPushToken(JNI
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverNotification(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverNotification(JNIEnv* env, jclass cls,
     jlong pid, jstring json) {
     const char* cj = (*env)->GetStringUTFChars(env, json, NULL);
     mob_deliver_notification(pid, cj);
@@ -153,7 +153,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverNotification(
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeSetLaunchNotification(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeSetLaunchNotification(JNIEnv* env, jclass cls,
     jstring json) {
     if (!json) { mob_set_launch_notification(NULL); return; }
     const char* cj = (*env)->GetStringUTFChars(env, json, NULL);
@@ -162,7 +162,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeSetLaunchNotificatio
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverWebViewMessage(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverWebViewMessage(JNIEnv* env, jclass cls,
     jlong pid, jstring json) {
     const char* cj = (*env)->GetStringUTFChars(env, json, NULL);
     mob_deliver_webview_message(pid, cj);
@@ -170,7 +170,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverWebViewMessag
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverWebViewBlocked(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverWebViewBlocked(JNIEnv* env, jclass cls,
     jlong pid, jstring url) {
     const char* cu = (*env)->GetStringUTFChars(env, url, NULL);
     mob_deliver_webview_blocked(pid, cu);
@@ -178,7 +178,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverWebViewBlocke
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverAlertAction(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverAlertAction(JNIEnv* env, jclass cls,
     jstring action) {
     const char* ca = (*env)->GetStringUTFChars(env, action, NULL);
     mob_deliver_alert_action(ca);
@@ -186,7 +186,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverAlertAction(J
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverComponentEvent(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverComponentEvent(JNIEnv* env, jclass cls,
     jint handle, jstring event, jstring payload_json) {
     const char* ce = (*env)->GetStringUTFChars(env, event,        NULL);
     const char* cj = (*env)->GetStringUTFChars(env, payload_json, NULL);
@@ -200,7 +200,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverComponentEven
 // See lib/mob/peripheral/vendor_usb.ex for the public message envelope shape.
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverVendorUsbDevices(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverVendorUsbDevices(JNIEnv* env, jclass cls,
     jlong pid, jstring json) {
     const char* cj = (*env)->GetStringUTFChars(env, json, NULL);
     mob_deliver_vendor_usb_devices(pid, cj);
@@ -208,7 +208,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverVendorUsbDevi
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverVendorUsbPermission(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverVendorUsbPermission(JNIEnv* env, jclass cls,
     jlong pid, jboolean granted, jstring device_json) {
     const char* cj = (*env)->GetStringUTFChars(env, device_json, NULL);
     mob_deliver_vendor_usb_permission(pid, granted ? 1 : 0, cj);
@@ -216,7 +216,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverVendorUsbPerm
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverVendorUsbOpened(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverVendorUsbOpened(JNIEnv* env, jclass cls,
     jlong pid, jint session_id, jstring device_json) {
     const char* cj = (*env)->GetStringUTFChars(env, device_json, NULL);
     mob_deliver_vendor_usb_opened(pid, (int)session_id, cj);
@@ -224,7 +224,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverVendorUsbOpen
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverVendorUsbData(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverVendorUsbData(JNIEnv* env, jclass cls,
     jlong pid, jint session_id, jbyteArray bytes, jint len) {
     if (!bytes || len <= 0) {
         mob_deliver_vendor_usb_data(pid, (int)session_id, NULL, 0);
@@ -238,19 +238,21 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverVendorUsbData
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverVendorUsbWriteComplete(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverVendorUsbWriteComplete(JNIEnv* env, jclass cls,
     jlong pid, jint session_id, jint bytes_written) {
     mob_deliver_vendor_usb_write_complete(pid, (int)session_id, (int)bytes_written);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverVendorUsbEvent(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverVendorUsbEvent(JNIEnv* env, jclass cls,
     jlong pid, jint session_id, jstring tag, jstring reason) {
     const char* ct = (*env)->GetStringUTFChars(env, tag, NULL);
     const char* cr = reason ? (*env)->GetStringUTFChars(env, reason, NULL) : NULL;
     mob_deliver_vendor_usb_event(pid, (int)session_id, ct, cr);
     (*env)->ReleaseStringUTFChars(env, tag, ct);
     if (cr) (*env)->ReleaseStringUTFChars(env, reason, cr);
+}
+
 // ── Bluetooth Classic (Mob.Bt suite) — JNI thunks ───────────────────────
 // Each thunk unmarshals Java args into C primitives, calls the matching
 // mob_deliver_bt_* helper, then releases.
@@ -258,25 +260,25 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverVendorUsbEven
 // ── Adapter-level events (no session) ──────────────────────────────────
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtDiscoveryStarted(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtDiscoveryStarted(JNIEnv* env, jclass cls,
     jlong pid) {
     mob_deliver_bt_discovery_started(pid);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtDiscoveryFinished(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtDiscoveryFinished(JNIEnv* env, jclass cls,
     jlong pid) {
     mob_deliver_bt_discovery_finished(pid);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtDiscoveryCancelled(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtDiscoveryCancelled(JNIEnv* env, jclass cls,
     jlong pid) {
     mob_deliver_bt_discovery_cancelled(pid);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtDiscovered(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtDiscovered(JNIEnv* env, jclass cls,
     jlong pid, jstring address, jstring name, jboolean bonded) {
     const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
     const char* c_name    = (*env)->GetStringUTFChars(env, name,    NULL);
@@ -286,7 +288,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtDiscovered(
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtPaired(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtPaired(JNIEnv* env, jclass cls,
     jlong pid, jstring address, jstring name, jboolean bonded) {
     const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
     const char* c_name    = (*env)->GetStringUTFChars(env, name,    NULL);
@@ -296,7 +298,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtPaired(JNIE
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtPairFailed(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtPairFailed(JNIEnv* env, jclass cls,
     jlong pid, jstring address, jstring reason) {
     const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
     const char* c_reason  = (*env)->GetStringUTFChars(env, reason,  NULL);
@@ -306,7 +308,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtPairFailed(
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtUnpaired(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtUnpaired(JNIEnv* env, jclass cls,
     jlong pid, jstring address) {
     const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
     mob_deliver_bt_unpaired(pid, c_address);
@@ -314,7 +316,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtUnpaired(JN
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtError(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtError(JNIEnv* env, jclass cls,
     jlong pid, jstring reason) {
     const char* c_reason = (*env)->GetStringUTFChars(env, reason, NULL);
     mob_deliver_bt_error(pid, c_reason);
@@ -324,13 +326,13 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtError(JNIEn
 // ── Paired-list streaming builder ──────────────────────────────────────
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtPairedListBegin(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtPairedListBegin(JNIEnv* env, jclass cls,
     jlong pid) {
     mob_deliver_bt_paired_list_begin(pid);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtPairedListEntry(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtPairedListEntry(JNIEnv* env, jclass cls,
     jlong pid, jstring address, jstring name, jboolean bonded) {
     const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
     const char* c_name    = (*env)->GetStringUTFChars(env, name,    NULL);
@@ -340,7 +342,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtPairedListE
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtPairedListFinish(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtPairedListFinish(JNIEnv* env, jclass cls,
     jlong pid) {
     mob_deliver_bt_paired_list_finish(pid);
 }
@@ -348,7 +350,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtPairedListF
 // ── HFP profile ────────────────────────────────────────────────────────
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpConnecting(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtHfpConnecting(JNIEnv* env, jclass cls,
     jlong pid, jint session, jstring address) {
     const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
     mob_deliver_bt_hfp_connecting(pid, (int)session, c_address);
@@ -356,7 +358,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpConnecti
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpConnected(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtHfpConnected(JNIEnv* env, jclass cls,
     jlong pid, jint session, jstring address, jstring name) {
     const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
     const char* c_name    = (*env)->GetStringUTFChars(env, name,    NULL);
@@ -366,7 +368,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpConnecte
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpConnectFailed(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtHfpConnectFailed(JNIEnv* env, jclass cls,
     jlong pid, jstring address, jstring reason) {
     const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
     const char* c_reason  = (*env)->GetStringUTFChars(env, reason,  NULL);
@@ -376,7 +378,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpConnectF
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpDisconnected(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtHfpDisconnected(JNIEnv* env, jclass cls,
     jlong pid, jint session, jstring reason) {
     const char* c_reason = (*env)->GetStringUTFChars(env, reason, NULL);
     mob_deliver_bt_hfp_disconnected(pid, (int)session, c_reason);
@@ -384,13 +386,13 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpDisconne
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpVendorSubscribed(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtHfpVendorSubscribed(JNIEnv* env, jclass cls,
     jlong pid, jint session) {
     mob_deliver_bt_hfp_vendor_subscribed(pid, (int)session);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpVendorAt(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtHfpVendorAt(JNIEnv* env, jclass cls,
     jlong pid, jint session, jstring cmd, jint cmd_type, jstring args, jstring address) {
     const char* c_cmd     = (*env)->GetStringUTFChars(env, cmd,     NULL);
     const char* c_args    = (*env)->GetStringUTFChars(env, args,    NULL);
@@ -402,7 +404,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpVendorAt
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpScoStarted(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtHfpScoStarted(JNIEnv* env, jclass cls,
     jlong pid, jint session, jstring address) {
     const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
     mob_deliver_bt_hfp_sco_started(pid, (int)session, c_address);
@@ -410,13 +412,13 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpScoStart
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpScoStopped(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtHfpScoStopped(JNIEnv* env, jclass cls,
     jlong pid, jint session) {
     mob_deliver_bt_hfp_sco_stopped(pid, (int)session);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpScoAudio(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtHfpScoAudio(JNIEnv* env, jclass cls,
     jlong pid, jint session, jbyteArray pcm) {
     jsize len = (*env)->GetArrayLength(env, pcm);
     jbyte* buf = (*env)->GetByteArrayElements(env, pcm, NULL);
@@ -425,7 +427,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpScoAudio
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpError(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtHfpError(JNIEnv* env, jclass cls,
     jlong pid, jint session, jstring reason) {
     const char* c_reason = (*env)->GetStringUTFChars(env, reason, NULL);
     mob_deliver_bt_hfp_error(pid, (int)session, c_reason);
@@ -435,7 +437,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpError(JN
 // ── SPP profile ────────────────────────────────────────────────────────
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtSppConnected(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtSppConnected(JNIEnv* env, jclass cls,
     jlong pid, jint session, jstring address, jstring name) {
     const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
     const char* c_name    = (*env)->GetStringUTFChars(env, name,    NULL);
@@ -445,7 +447,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtSppConnecte
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtSppConnectFailed(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtSppConnectFailed(JNIEnv* env, jclass cls,
     jlong pid, jstring address, jstring reason) {
     const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
     const char* c_reason  = (*env)->GetStringUTFChars(env, reason,  NULL);
@@ -455,7 +457,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtSppConnectF
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtSppDisconnected(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtSppDisconnected(JNIEnv* env, jclass cls,
     jlong pid, jint session, jstring reason) {
     const char* c_reason = (*env)->GetStringUTFChars(env, reason, NULL);
     mob_deliver_bt_spp_disconnected(pid, (int)session, c_reason);
@@ -463,7 +465,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtSppDisconne
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtSppData(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtSppData(JNIEnv* env, jclass cls,
     jlong pid, jint session, jbyteArray data) {
     jsize len = (*env)->GetArrayLength(env, data);
     jbyte* buf = (*env)->GetByteArrayElements(env, data, NULL);
@@ -472,13 +474,13 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtSppData(JNI
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtSppWritten(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtSppWritten(JNIEnv* env, jclass cls,
     jlong pid, jint session, jint size) {
     mob_deliver_bt_spp_written(pid, (int)session, (int)size);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtSppError(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtSppError(JNIEnv* env, jclass cls,
     jlong pid, jint session, jstring reason) {
     const char* c_reason = (*env)->GetStringUTFChars(env, reason, NULL);
     mob_deliver_bt_spp_error(pid, (int)session, c_reason);
@@ -488,7 +490,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtSppError(JN
 // ── HID profile ────────────────────────────────────────────────────────
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHidConnected(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtHidConnected(JNIEnv* env, jclass cls,
     jlong pid, jint session, jstring address) {
     const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
     mob_deliver_bt_hid_connected(pid, (int)session, c_address);
@@ -496,7 +498,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHidConnecte
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHidConnectFailed(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtHidConnectFailed(JNIEnv* env, jclass cls,
     jlong pid, jstring address, jstring reason) {
     const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
     const char* c_reason  = (*env)->GetStringUTFChars(env, reason,  NULL);
@@ -506,7 +508,7 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHidConnectF
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHidDisconnected(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtHidDisconnected(JNIEnv* env, jclass cls,
     jlong pid, jint session, jstring reason) {
     const char* c_reason = (*env)->GetStringUTFChars(env, reason, NULL);
     mob_deliver_bt_hid_disconnected(pid, (int)session, c_reason);
@@ -514,13 +516,13 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHidDisconne
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHidInput(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtHidInput(JNIEnv* env, jclass cls,
     jlong pid, jint session, jint type, jint code, jint value) {
     mob_deliver_bt_hid_input(pid, (int)session, (int)type, (int)code, (int)value);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHidRawReport(JNIEnv* env, jclass cls,
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverBtHidRawReport(JNIEnv* env, jclass cls,
     jlong pid, jint session, jbyteArray report) {
     jsize len = (*env)->GetArrayLength(env, report);
     jbyte* buf = (*env)->GetByteArrayElements(env, report, NULL);
@@ -528,279 +530,3 @@ Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHidRawRepor
     (*env)->ReleaseByteArrayElements(env, report, buf, JNI_ABORT);
 }
 
-// ── Bluetooth Classic (Mob.Bt suite) — JNI thunks ───────────────────────
-// Each thunk unmarshals Java args into C primitives, calls the matching
-// mob_deliver_bt_* helper, then releases.
-
-// ── Adapter-level events (no session) ──────────────────────────────────
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtDiscoveryStarted(JNIEnv* env, jclass cls,
-    jlong pid) {
-    mob_deliver_bt_discovery_started(pid);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtDiscoveryFinished(JNIEnv* env, jclass cls,
-    jlong pid) {
-    mob_deliver_bt_discovery_finished(pid);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtDiscoveryCancelled(JNIEnv* env, jclass cls,
-    jlong pid) {
-    mob_deliver_bt_discovery_cancelled(pid);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtDiscovered(JNIEnv* env, jclass cls,
-    jlong pid, jstring address, jstring name, jboolean bonded) {
-    const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
-    const char* c_name    = (*env)->GetStringUTFChars(env, name,    NULL);
-    mob_deliver_bt_discovered(pid, c_address, c_name, bonded ? 1 : 0);
-    (*env)->ReleaseStringUTFChars(env, address, c_address);
-    (*env)->ReleaseStringUTFChars(env, name,    c_name);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtPaired(JNIEnv* env, jclass cls,
-    jlong pid, jstring address, jstring name, jboolean bonded) {
-    const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
-    const char* c_name    = (*env)->GetStringUTFChars(env, name,    NULL);
-    mob_deliver_bt_paired(pid, c_address, c_name, bonded ? 1 : 0);
-    (*env)->ReleaseStringUTFChars(env, address, c_address);
-    (*env)->ReleaseStringUTFChars(env, name,    c_name);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtPairFailed(JNIEnv* env, jclass cls,
-    jlong pid, jstring address, jstring reason) {
-    const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
-    const char* c_reason  = (*env)->GetStringUTFChars(env, reason,  NULL);
-    mob_deliver_bt_pair_failed(pid, c_address, c_reason);
-    (*env)->ReleaseStringUTFChars(env, address, c_address);
-    (*env)->ReleaseStringUTFChars(env, reason,  c_reason);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtUnpaired(JNIEnv* env, jclass cls,
-    jlong pid, jstring address) {
-    const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
-    mob_deliver_bt_unpaired(pid, c_address);
-    (*env)->ReleaseStringUTFChars(env, address, c_address);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtError(JNIEnv* env, jclass cls,
-    jlong pid, jstring reason) {
-    const char* c_reason = (*env)->GetStringUTFChars(env, reason, NULL);
-    mob_deliver_bt_error(pid, c_reason);
-    (*env)->ReleaseStringUTFChars(env, reason, c_reason);
-}
-
-// ── Paired-list streaming builder ──────────────────────────────────────
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtPairedListBegin(JNIEnv* env, jclass cls,
-    jlong pid) {
-    mob_deliver_bt_paired_list_begin(pid);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtPairedListEntry(JNIEnv* env, jclass cls,
-    jlong pid, jstring address, jstring name, jboolean bonded) {
-    const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
-    const char* c_name    = (*env)->GetStringUTFChars(env, name,    NULL);
-    mob_deliver_bt_paired_list_entry(pid, c_address, c_name, bonded ? 1 : 0);
-    (*env)->ReleaseStringUTFChars(env, address, c_address);
-    (*env)->ReleaseStringUTFChars(env, name,    c_name);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtPairedListFinish(JNIEnv* env, jclass cls,
-    jlong pid) {
-    mob_deliver_bt_paired_list_finish(pid);
-}
-
-// ── HFP profile ────────────────────────────────────────────────────────
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpConnecting(JNIEnv* env, jclass cls,
-    jlong pid, jint session, jstring address) {
-    const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
-    mob_deliver_bt_hfp_connecting(pid, (int)session, c_address);
-    (*env)->ReleaseStringUTFChars(env, address, c_address);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpConnected(JNIEnv* env, jclass cls,
-    jlong pid, jint session, jstring address, jstring name) {
-    const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
-    const char* c_name    = (*env)->GetStringUTFChars(env, name,    NULL);
-    mob_deliver_bt_hfp_connected(pid, (int)session, c_address, c_name);
-    (*env)->ReleaseStringUTFChars(env, address, c_address);
-    (*env)->ReleaseStringUTFChars(env, name,    c_name);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpConnectFailed(JNIEnv* env, jclass cls,
-    jlong pid, jstring address, jstring reason) {
-    const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
-    const char* c_reason  = (*env)->GetStringUTFChars(env, reason,  NULL);
-    mob_deliver_bt_hfp_connect_failed(pid, c_address, c_reason);
-    (*env)->ReleaseStringUTFChars(env, address, c_address);
-    (*env)->ReleaseStringUTFChars(env, reason,  c_reason);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpDisconnected(JNIEnv* env, jclass cls,
-    jlong pid, jint session, jstring reason) {
-    const char* c_reason = (*env)->GetStringUTFChars(env, reason, NULL);
-    mob_deliver_bt_hfp_disconnected(pid, (int)session, c_reason);
-    (*env)->ReleaseStringUTFChars(env, reason, c_reason);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpVendorSubscribed(JNIEnv* env, jclass cls,
-    jlong pid, jint session) {
-    mob_deliver_bt_hfp_vendor_subscribed(pid, (int)session);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpVendorAt(JNIEnv* env, jclass cls,
-    jlong pid, jint session, jstring cmd, jint cmd_type, jstring args, jstring address) {
-    const char* c_cmd     = (*env)->GetStringUTFChars(env, cmd,     NULL);
-    const char* c_args    = (*env)->GetStringUTFChars(env, args,    NULL);
-    const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
-    mob_deliver_bt_hfp_vendor_at(pid, (int)session, c_cmd, (int)cmd_type, c_args, c_address);
-    (*env)->ReleaseStringUTFChars(env, cmd,     c_cmd);
-    (*env)->ReleaseStringUTFChars(env, args,    c_args);
-    (*env)->ReleaseStringUTFChars(env, address, c_address);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpScoStarted(JNIEnv* env, jclass cls,
-    jlong pid, jint session, jstring address) {
-    const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
-    mob_deliver_bt_hfp_sco_started(pid, (int)session, c_address);
-    (*env)->ReleaseStringUTFChars(env, address, c_address);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpScoStopped(JNIEnv* env, jclass cls,
-    jlong pid, jint session) {
-    mob_deliver_bt_hfp_sco_stopped(pid, (int)session);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpScoAudio(JNIEnv* env, jclass cls,
-    jlong pid, jint session, jbyteArray pcm) {
-    jsize len = (*env)->GetArrayLength(env, pcm);
-    jbyte* buf = (*env)->GetByteArrayElements(env, pcm, NULL);
-    mob_deliver_bt_hfp_sco_audio(pid, (int)session, (const char*)buf, (size_t)len);
-    (*env)->ReleaseByteArrayElements(env, pcm, buf, JNI_ABORT);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHfpError(JNIEnv* env, jclass cls,
-    jlong pid, jint session, jstring reason) {
-    const char* c_reason = (*env)->GetStringUTFChars(env, reason, NULL);
-    mob_deliver_bt_hfp_error(pid, (int)session, c_reason);
-    (*env)->ReleaseStringUTFChars(env, reason, c_reason);
-}
-
-// ── SPP profile ────────────────────────────────────────────────────────
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtSppConnected(JNIEnv* env, jclass cls,
-    jlong pid, jint session, jstring address, jstring name) {
-    const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
-    const char* c_name    = (*env)->GetStringUTFChars(env, name,    NULL);
-    mob_deliver_bt_spp_connected(pid, (int)session, c_address, c_name);
-    (*env)->ReleaseStringUTFChars(env, address, c_address);
-    (*env)->ReleaseStringUTFChars(env, name,    c_name);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtSppConnectFailed(JNIEnv* env, jclass cls,
-    jlong pid, jstring address, jstring reason) {
-    const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
-    const char* c_reason  = (*env)->GetStringUTFChars(env, reason,  NULL);
-    mob_deliver_bt_spp_connect_failed(pid, c_address, c_reason);
-    (*env)->ReleaseStringUTFChars(env, address, c_address);
-    (*env)->ReleaseStringUTFChars(env, reason,  c_reason);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtSppDisconnected(JNIEnv* env, jclass cls,
-    jlong pid, jint session, jstring reason) {
-    const char* c_reason = (*env)->GetStringUTFChars(env, reason, NULL);
-    mob_deliver_bt_spp_disconnected(pid, (int)session, c_reason);
-    (*env)->ReleaseStringUTFChars(env, reason, c_reason);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtSppData(JNIEnv* env, jclass cls,
-    jlong pid, jint session, jbyteArray data) {
-    jsize len = (*env)->GetArrayLength(env, data);
-    jbyte* buf = (*env)->GetByteArrayElements(env, data, NULL);
-    mob_deliver_bt_spp_data(pid, (int)session, (const char*)buf, (size_t)len);
-    (*env)->ReleaseByteArrayElements(env, data, buf, JNI_ABORT);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtSppWritten(JNIEnv* env, jclass cls,
-    jlong pid, jint session, jint size) {
-    mob_deliver_bt_spp_written(pid, (int)session, (int)size);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtSppError(JNIEnv* env, jclass cls,
-    jlong pid, jint session, jstring reason) {
-    const char* c_reason = (*env)->GetStringUTFChars(env, reason, NULL);
-    mob_deliver_bt_spp_error(pid, (int)session, c_reason);
-    (*env)->ReleaseStringUTFChars(env, reason, c_reason);
-}
-
-// ── HID profile ────────────────────────────────────────────────────────
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHidConnected(JNIEnv* env, jclass cls,
-    jlong pid, jint session, jstring address) {
-    const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
-    mob_deliver_bt_hid_connected(pid, (int)session, c_address);
-    (*env)->ReleaseStringUTFChars(env, address, c_address);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHidConnectFailed(JNIEnv* env, jclass cls,
-    jlong pid, jstring address, jstring reason) {
-    const char* c_address = (*env)->GetStringUTFChars(env, address, NULL);
-    const char* c_reason  = (*env)->GetStringUTFChars(env, reason,  NULL);
-    mob_deliver_bt_hid_connect_failed(pid, c_address, c_reason);
-    (*env)->ReleaseStringUTFChars(env, address, c_address);
-    (*env)->ReleaseStringUTFChars(env, reason,  c_reason);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHidDisconnected(JNIEnv* env, jclass cls,
-    jlong pid, jint session, jstring reason) {
-    const char* c_reason = (*env)->GetStringUTFChars(env, reason, NULL);
-    mob_deliver_bt_hid_disconnected(pid, (int)session, c_reason);
-    (*env)->ReleaseStringUTFChars(env, reason, c_reason);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHidInput(JNIEnv* env, jclass cls,
-    jlong pid, jint session, jint type, jint code, jint value) {
-    mob_deliver_bt_hid_input(pid, (int)session, (int)type, (int)code, (int)value);
-}
-
-JNIEXPORT void JNICALL
-Java_com_example_minutemodem_1mobile_1fresh_MobBridge_nativeDeliverBtHidRawReport(JNIEnv* env, jclass cls,
-    jlong pid, jint session, jbyteArray report) {
-    jsize len = (*env)->GetArrayLength(env, report);
-    jbyte* buf = (*env)->GetByteArrayElements(env, report, NULL);
-    mob_deliver_bt_hid_raw_report(pid, (int)session, (const char*)buf, (size_t)len);
-    (*env)->ReleaseByteArrayElements(env, report, buf, JNI_ABORT);
-}
