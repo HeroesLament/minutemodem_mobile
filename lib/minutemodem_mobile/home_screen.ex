@@ -17,6 +17,8 @@ defmodule MinutemodemMobile.HomeScreen do
         <Text text="MinutemodemMobile" text_size={:xl} text_color={:on_surface} padding={:space_sm} />
         <Text text="BEAM running on device" text_size={:sm} text_color={:primary} padding={4} />
         <Spacer size={40} />
+        {nav_button("MinuteModem (Text → 110D)", :open_tx)}
+        <Spacer size={12} />
         {nav_button("Text Input",          :open_text)}
         <Spacer size={12} />
         {nav_button("Rock Paper Scissors", :open_list)}
@@ -43,6 +45,10 @@ defmodule MinutemodemMobile.HomeScreen do
       </Column>
     </Scroll>
     """
+  end
+
+  def handle_info({:tap, :open_tx}, socket) do
+    {:noreply, Mob.Socket.push_screen(socket, MinutemodemMobile.TxScreen)}
   end
 
   def handle_info({:tap, :open_text}, socket) do

@@ -10,6 +10,24 @@ defmodule MinutemodemMobile.App do
 
   @impl Mob.App
   def on_start do
+    # Minutewave app env — normally loaded from config/config.exs, but Mob's
+    # start_clean boot doesn't load consumer config. Apply ours explicitly.
+    Application.put_env(:minutewave, :phy_modem_nif, MinutemodemMobile.Nifs.PhyModem)
+    Application.put_env(:minutewave, :audio_backend, MinutemodemMobile.Audio.LoopbackBackend)
+    Application.put_env(:minutewave, :rig_control,   MinutemodemMobile.Rig.StubControl)
+
+    # Minutewave registries — normally started by Minutewave.Application,
+    # but Mob's start_clean boot doesn't start path-dep applications.
+    # Start them here before any screen tries to use them.
+    {:ok, _} = Registry.start_link(keys: :unique, name: Minutewave.Modem.Registry)
+    {:ok, _} = Registry.start_link(keys: :unique, name: Minutewave.Rig.InstanceRegistry)
+    {:ok, _} = Registry.start_link(keys: :unique, name: Minutewave.Interface.Registry)
+
+    # Audio backend — receives :subscribe calls from RxFSM at startup.
+    # Same reason: MinutemodemMobile.Application doesn't run under Mob,
+    # so we start the GenServer here.
+    {:ok, _} = MinutemodemMobile.Audio.LoopbackBackend.start_link([])
+
     # Configure BEAM's DNS path so Req / Finch / Mint / `gen_tcp:connect/3`
     # with a hostname work on iOS without per-host setup. Flips the lookup
     # chain from the iOS-broken `:native` (inet_gethost port program) path
