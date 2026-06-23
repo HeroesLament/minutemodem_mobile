@@ -24,7 +24,7 @@ defmodule MinutemodemMobile.MixProject do
     [
       {:rustler, "~> 0.37"},
       {:minutewave, path: "../minutewave_ex"},
-      {:mob, "~> 0.6"},
+      {:mob, "~> 0.7"},
       {:mob_dev, "~> 0.5", only: :dev, runtime: false},
       {:ecto_sqlite3, "~> 0.18"},
       # Code quality — Credo + ex_slop (catches AI-generated patterns
