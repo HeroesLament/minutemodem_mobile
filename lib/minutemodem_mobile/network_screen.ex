@@ -13,17 +13,9 @@ defmodule MinutemodemMobile.NetworkScreen do
   @inset 0xFF060606
   @bezel 0xFF3A3A3A
 
-  def mount(_params, _session, socket) do
-    {:ok, assign_active(socket, status: nil)}
-  end
-
-  defp assign_active(socket, extra) do
-    net = Networks.active()
-
-    socket
-    |> Mob.Socket.assign(net: net, params: (net && net.params) || %{})
-    |> Mob.Socket.assign(extra)
-  end
+  # Render-only module: ShellScreen owns mount/state/events and calls
+  # render/1 with the needed assigns. mount/3 kept minimal for the behaviour.
+  def mount(_params, _session, socket), do: {:ok, socket}
 
   def render(%{net: nil} = _assigns) do
     ~MOB"""
@@ -117,25 +109,6 @@ defmodule MinutemodemMobile.NetworkScreen do
     </Column>
     """
   end
-
-  def handle_info({:change, {:param_change, key}, value}, socket) do
-    case socket.assigns.net do
-      nil ->
-        {:noreply, socket}
-
-      net ->
-        case Networks.update_params(net, %{key => value}) do
-          {:ok, updated} ->
-            {:noreply,
-             Mob.Socket.assign(socket, net: updated, params: updated.params, status: "SAVED " <> String.upcase(key))}
-
-          {:error, _cs} ->
-            {:noreply, Mob.Socket.assign(socket, status: "SAVE FAILED")}
-        end
-    end
-  end
-
-  def handle_info(_msg, socket), do: {:noreply, socket}
 
   defp type_banner("ale"), do: "ALE NETWORK PARAMETERS"
   defp type_banner("data"), do: "DATA NETWORK PARAMETERS"

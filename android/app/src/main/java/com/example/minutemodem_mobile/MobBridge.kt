@@ -43,6 +43,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size as ComposeSize
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -2644,7 +2646,10 @@ private fun MobDrawer(node: MobNode, modifier: Modifier) {
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet {
+            ModalDrawerSheet(
+                drawerContainerColor = Color(0xFF0A0A0A),
+                drawerShape = RectangleShape
+            ) {
                 tabs.forEach { tab ->
                     NavigationDrawerItem(
                         label    = { Text(tab["label"] ?: "") },
@@ -2654,6 +2659,15 @@ private fun MobDrawer(node: MobNode, modifier: Modifier) {
                             handle?.let { MobBridge.nativeSendChangeStr(it, tab["id"] ?: "") }
                         },
                         icon     = { Icon(materialIconForLogical(tab["icon"] ?: ""), contentDescription = tab["label"]) },
+                        shape    = RectangleShape,
+                        colors   = NavigationDrawerItemDefaults.colors(
+                            selectedContainerColor   = Color(0xFF0E1A0E),
+                            unselectedContainerColor = Color(0xFF0A0A0A),
+                            selectedTextColor        = Color(0xFFE8C84A),
+                            unselectedTextColor      = Color(0xFF9A9A9A),
+                            selectedIconColor        = Color(0xFFE8C84A),
+                            unselectedIconColor      = Color(0xFF9A9A9A)
+                        ),
                         modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                     )
                 }
@@ -2662,9 +2676,16 @@ private fun MobDrawer(node: MobNode, modifier: Modifier) {
     ) {
         Scaffold(
             modifier = modifier,
+            containerColor = Color(0xFF0A0A0A),
+            contentColor   = Color(0xFFE8C84A),
             topBar = {
                 TopAppBar(
                     title = { Text(activeLabel) },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor             = Color(0xFF0A0A0A),
+                        titleContentColor          = Color(0xFFE8C84A),
+                        navigationIconContentColor = Color(0xFFE8C84A)
+                    ),
                     navigationIcon = {
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
                             Icon(Icons.Filled.Menu, contentDescription = "Menu")

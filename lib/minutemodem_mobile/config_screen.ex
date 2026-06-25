@@ -32,22 +32,10 @@ defmodule MinutemodemMobile.ConfigScreen do
 
   # -- Lifecycle ------------------------------------------------------------
 
-  def mount(_params, _session, socket) do
-    {:ok, assign_networks(socket, status: nil)
-          |> Mob.Socket.assign(
-            station: Mob.State.get(:station_name, ""),
-            audio_backend: audio_backend_name()
-          )}
-  end
-
-  defp assign_networks(socket, extra) do
-    networks = Networks.list()
-    active = Enum.find(networks, & &1.active)
-
-    socket
-    |> Mob.Socket.assign(networks: networks, active_name: active && active.name, active_type: active && active.type)
-    |> Mob.Socket.assign(extra)
-  end
+  # Render-only module: ShellScreen owns mount/state/events and calls
+  # render/1 with the needed assigns. mount/3 is kept minimal to satisfy the
+  # Mob.Screen behaviour (this screen is never started standalone).
+  def mount(_params, _session, socket), do: {:ok, socket}
 
   # -- UI -------------------------------------------------------------------
 
@@ -170,40 +158,6 @@ defmodule MinutemodemMobile.ConfigScreen do
     """
   end
 
-  # -- Events ---------------------------------------------------------------
-
-  def handle_info({:change, :station_changed, value}, socket) do
-    Mob.State.put(:station_name, value)
-    {:noreply, Mob.Socket.assign(socket, station: value)}
-  end
-
-  def handle_info({:tap, {:activate, name}}, socket) do
-    net = Enum.find(socket.assigns.networks, &(&1.name == name))
-
-    case net && Networks.activate(net.id) do
-      {:ok, _} ->
-        Logger.info("[Config] active network -> #{name}")
-        {:noreply, assign_networks(socket, status: "ACTIVATED #{name}")}
-
-      _ ->
-        {:noreply, Mob.Socket.assign(socket, status: "ACTIVATE FAILED")}
-    end
-  end
-
-  def handle_info({:tap, :new_network}, socket) do
-    name = Networks.next_default_name()
-
-    case Networks.create(%{name: name, type: "ale"}) do
-      {:ok, _} ->
-        {:noreply, assign_networks(socket, status: "CREATED #{name} — CONFIGURE IN NETWORK VIEW")}
-
-      {:error, _cs} ->
-        {:noreply, Mob.Socket.assign(socket, status: "CREATE FAILED")}
-    end
-  end
-
-  def handle_info(_msg, socket), do: {:noreply, socket}
-
   # -- Helpers --------------------------------------------------------------
 
   defp type_label("ale"), do: "ALE NETWORK"
@@ -214,10 +168,4 @@ defmodule MinutemodemMobile.ConfigScreen do
   defp mode_label("data"), do: "DATA"
   defp mode_label(_), do: "STANDBY"
 
-  defp audio_backend_name do
-    case Application.get_env(:minutewave, :audio_backend) do
-      nil -> "NONE"
-      mod -> mod |> Module.split() |> List.last() |> String.upcase()
-    end
-  end
 end
