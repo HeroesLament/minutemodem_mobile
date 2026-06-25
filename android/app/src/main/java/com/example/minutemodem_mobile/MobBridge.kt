@@ -26,6 +26,11 @@ import androidx.core.content.FileProvider
 import android.content.IntentFilter
 import android.util.Log
 import android.media.AudioManager
+import android.media.AudioRecord
+import android.media.AudioTrack
+import android.media.AudioFormat
+import android.media.AudioDeviceInfo
+import android.media.AudioAttributes
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -1487,6 +1492,209 @@ object MobBridge {
         }
         usbReceiverRegistered = true
     }
+
+
+    // ── Real-time PCM duplex bridge (AudioRecord + AudioTrack) ─────────────
+    // Generic full-duplex PCM I/O for DSP use (e.g. a softmodem over a USB
+    // audio codec, plus an operator voice path over an LE Audio headset).
+    // All framing/resampling/DSP/vocoder logic stays BEAM-side; this only
+    // moves raw PCM. Capture uses AudioSource.UNPROCESSED to bypass the OS
+    // voice DSP (AGC/NS/AEC) that would mangle modem tones. Each stream is
+    // pinned to a specific device via setPreferredDevice using an id from
+    // audio_pcm_list_devices — no global comm-route lock, so two domains
+    // (USB modem + BLE voice) can run concurrently as independent streams.
+    private data class PcmSession(
+        val record: AudioRecord?,
+        val track: AudioTrack?,
+        val running: AtomicBoolean,
+        var readThread: Thread?,
+        val frameBytes: Int
+    )
+    private val pcmSessions = ConcurrentHashMap<Int, PcmSession>()
+    private val pcmNextSession = AtomicInteger(1)
+
+    private fun pcmAudioManager(): AudioManager? =
+        (activityRef?.get())?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+
+    private fun pcmFindDevice(am: AudioManager, deviceId: Int, inputs: Boolean): AudioDeviceInfo? {
+        val flag = if (inputs) AudioManager.GET_DEVICES_INPUTS else AudioManager.GET_DEVICES_OUTPUTS
+        return am.getDevices(flag).firstOrNull { it.id == deviceId }
+    }
+
+    // Enumerate input+output devices so Elixir can pick targets by id/type.
+    // Flags TYPE_USB_* (modem domain) and TYPE_BLE_HEADSET (operator voice).
+    @JvmStatic
+    fun audio_pcm_list_devices(pid: Long) {
+        try {
+            val ctx = activityRef?.get() ?: run {
+                nativeDeliverAtom3(pid, "audio_pcm", "error", "no_context"); return
+            }
+            val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val arr = org.json.JSONArray()
+            val ins = am.getDevices(AudioManager.GET_DEVICES_INPUTS)
+            val outs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            for (d in ins + outs) {
+                val o = JSONObject()
+                o.put("id", d.id)
+                o.put("type", d.type)
+                o.put("product_name", d.productName?.toString() ?: "")
+                o.put("is_source", d.isSource)
+                o.put("is_sink", d.isSink)
+                o.put("is_usb", d.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
+                    d.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+                    d.type == AudioDeviceInfo.TYPE_USB_ACCESSORY)
+                o.put("is_le", d.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
+                arr.put(o)
+            }
+            nativeDeliverFileResult(pid, "audio_pcm", "devices", arr.toString())
+        } catch (e: Exception) {
+            nativeDeliverAtom3(pid, "audio_pcm", "error", "list_failed")
+        }
+    }
+
+    // Open a pinned full-duplex PCM stream. opts JSON:
+    //   sample_rate (Int, default 48000)
+    //   channels    (Int, 1|2, default 1)
+    //   record_device_id (Int, optional) — pin capture via setPreferredDevice
+    //   play_device_id   (Int, optional) — pin playback via setPreferredDevice
+    //   unprocessed (Bool, default true) — UNPROCESSED source for the modem
+    //   chunk_frames (Int, default 1024) — capture delivery granularity
+    // Delivers: {audio_pcm, opened, "<session>"} on success, then streams
+    // captured PCM up via nativeDeliverAudioPcmData(pid, session, bytes, n).
+    @JvmStatic
+    fun audio_pcm_open(pid: Long, optsJson: String) {
+        try {
+            val opts = JSONObject(optsJson)
+            val sampleRate = opts.optInt("sample_rate", 48000)
+            val channels   = opts.optInt("channels", 1)
+            val recDevId   = if (opts.has("record_device_id") && !opts.isNull("record_device_id"))
+                opts.getInt("record_device_id") else -1
+            val playDevId  = if (opts.has("play_device_id") && !opts.isNull("play_device_id"))
+                opts.getInt("play_device_id") else -1
+            val unprocessed = opts.optBoolean("unprocessed", true)
+            val chunkFrames = opts.optInt("chunk_frames", 1024)
+
+            val am = pcmAudioManager() ?: run {
+                nativeDeliverAtom3(pid, "audio_pcm", "error", "no_audio_manager"); return
+            }
+
+            val inChMask  = if (channels >= 2) AudioFormat.CHANNEL_IN_STEREO else AudioFormat.CHANNEL_IN_MONO
+            val outChMask = if (channels >= 2) AudioFormat.CHANNEL_OUT_STEREO else AudioFormat.CHANNEL_OUT_MONO
+            val encoding  = AudioFormat.ENCODING_PCM_16BIT
+            val bytesPerFrame = 2 * (if (channels >= 2) 2 else 1)
+
+            // Pick the capture source: UNPROCESSED (raw, no AGC/NS/AEC) for the
+            // modem; fall back to VOICE_RECOGNITION (minimally processed) then
+            // DEFAULT if the platform/route declines UNPROCESSED.
+            val supportsUnproc = am.getProperty(
+                AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED) == "true"
+            val source = when {
+                unprocessed && supportsUnproc -> MediaRecorder.AudioSource.UNPROCESSED
+                unprocessed                   -> MediaRecorder.AudioSource.VOICE_RECOGNITION
+                else                          -> MediaRecorder.AudioSource.DEFAULT
+            }
+
+            val minIn = AudioRecord.getMinBufferSize(sampleRate, inChMask, encoding)
+            val inBuf = maxOf(minIn, chunkFrames * bytesPerFrame * 4)
+            val record = AudioRecord.Builder()
+                .setAudioSource(source)
+                .setAudioFormat(AudioFormat.Builder()
+                    .setEncoding(encoding).setSampleRate(sampleRate).setChannelMask(inChMask).build())
+                .setBufferSizeInBytes(inBuf)
+                .build()
+            if (recDevId >= 0) pcmFindDevice(am, recDevId, true)?.let { record.setPreferredDevice(it) }
+
+            val minOut = AudioTrack.getMinBufferSize(sampleRate, outChMask, encoding)
+            val outBuf = maxOf(minOut, chunkFrames * bytesPerFrame * 4)
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+                .setAudioFormat(AudioFormat.Builder()
+                    .setEncoding(encoding).setSampleRate(sampleRate).setChannelMask(outChMask).build())
+                .setBufferSizeInBytes(outBuf)
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .build()
+            if (playDevId >= 0) pcmFindDevice(am, playDevId, false)?.let { track.setPreferredDevice(it) }
+
+            if (record.state != AudioRecord.STATE_INITIALIZED) {
+                nativeDeliverAtom3(pid, "audio_pcm", "error", "record_init_failed"); return
+            }
+            if (track.state != AudioTrack.STATE_INITIALIZED) {
+                nativeDeliverAtom3(pid, "audio_pcm", "error", "track_init_failed"); return
+            }
+
+            val sid = pcmNextSession.getAndIncrement()
+            val running = AtomicBoolean(true)
+            val session = PcmSession(record, track, running, null, chunkFrames * bytesPerFrame)
+
+            track.play()
+            record.startRecording()
+
+            val readThread = Thread {
+                val buf = ByteArray(chunkFrames * bytesPerFrame)
+                while (running.get()) {
+                    val n = try {
+                        record.read(buf, 0, buf.size, AudioRecord.READ_BLOCKING)
+                    } catch (e: Exception) {
+                        if (running.get()) nativeDeliverAtom3(pid, "audio_pcm", "error", "read_failed")
+                        break
+                    }
+                    if (n > 0) {
+                        val out = if (n == buf.size) buf else buf.copyOf(n)
+                        nativeDeliverAudioPcmData(pid, sid, out, n)
+                    }
+                }
+            }.apply { name = "MobPcmRead-$sid"; isDaemon = true }
+            session.readThread = readThread
+            pcmSessions[sid] = session
+            readThread.start()
+
+            // Report routed devices so Elixir can verify the pins took (the
+            // HAL may silently re-route; getRoutedDevice() is the ground truth).
+            val rr = record.routedDevice?.id ?: -1
+            val rt = track.routedDevice?.id ?: -1
+            val res = JSONObject()
+            res.put("session", sid)
+            res.put("source", source)
+            res.put("record_routed_id", rr)
+            res.put("play_routed_id", rt)
+            nativeDeliverFileResult(pid, "audio_pcm", "opened", res.toString())
+        } catch (e: Exception) {
+            nativeDeliverAtom3(pid, "audio_pcm", "error", "open_failed")
+        }
+    }
+
+    // Enqueue PCM for playback on the session's AudioTrack. Runs the blocking
+    // write off the caller thread.
+    @JvmStatic
+    fun audio_pcm_write(pid: Long, sessionId: Int, bytes: ByteArray) {
+        val s = pcmSessions[sessionId] ?: run {
+            nativeDeliverAtom3(pid, "audio_pcm", "error", "no_session"); return
+        }
+        val track = s.track ?: return
+        Thread {
+            try {
+                track.write(bytes, 0, bytes.size, AudioTrack.WRITE_BLOCKING)
+            } catch (e: Exception) {
+                if (s.running.get()) nativeDeliverAtom3(pid, "audio_pcm", "error", "write_failed")
+            }
+        }.apply { isDaemon = true }.start()
+    }
+
+    // Stop and release a session's streams.
+    @JvmStatic
+    fun audio_pcm_close(sessionId: Int) {
+        val s = pcmSessions.remove(sessionId) ?: return
+        s.running.set(false)
+        try { s.readThread?.join(500) } catch (e: Exception) {}
+        try { s.record?.stop() } catch (e: Exception) {}
+        try { s.record?.release() } catch (e: Exception) {}
+        try { s.track?.stop() } catch (e: Exception) {}
+        try { s.track?.release() } catch (e: Exception) {}
+    }
+
+    @JvmStatic external fun nativeDeliverAudioPcmData(pid: Long, session: Int, bytes: ByteArray, n: Int)
 
     // Native callbacks — implemented in beam_jni.c → mob_deliver_vendor_usb_*.
     @JvmStatic external fun nativeDeliverVendorUsbDevices(pid: Long, json: String)
