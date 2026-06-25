@@ -4,8 +4,13 @@ defmodule MinutemodemMobile.App do
   use Mob.App
 
   @impl Mob.App
+  # Android renders a native left drawer; iOS native drawer support is
+  # deferred in Mob 0.7.5, so it falls back to a plain stack there.
+  # Single stack rooted at ShellScreen, which renders its own bottom TabBar
+  # node (CONFIG / NETWORK). Mob 0.7.5's framework tab_bar/drawer nav is not
+  # wired through the render path, so we drive the tab bar from the screen.
   def navigation(_platform) do
-    stack(:main, root: MinutemodemMobile.HomeScreen)
+    stack(:main, root: MinutemodemMobile.ShellScreen)
   end
 
   @impl Mob.App
@@ -46,7 +51,7 @@ defmodule MinutemodemMobile.App do
       Ecto.Migrator.run(repo, migrations_dir(), :up, all: true)
     end)
 
-    Mob.Screen.start_root(MinutemodemMobile.HomeScreen)
+    Mob.Screen.start_root(MinutemodemMobile.ShellScreen)
     Mob.Dist.ensure_started(node: :"minutemodem_mobile_android@127.0.0.1", cookie: :mob_secret)
   end
 

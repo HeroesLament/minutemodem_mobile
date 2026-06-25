@@ -52,6 +52,21 @@ defmodule MinutemodemMobile.Networks do
     end)
   end
 
+  @doc """
+  Merge `new_params` into a network's params map and persist. Returns
+  {:ok, network} or {:error, changeset}.
+  """
+  def update_params(%Network{} = net, new_params) when is_map(new_params) do
+    merged = Map.merge(net.params || %{}, new_params)
+
+    net
+    |> Network.changeset(%{params: merged})
+    |> Repo.update()
+  end
+
+  @doc "Fetch a network by id, or nil."
+  def get(id), do: Repo.get(Network, id)
+
   @doc "Generate a default unique network name like NET-1, NET-2."
   def next_default_name do
     "NET-#{length(list()) + 1}"
