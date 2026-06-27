@@ -1503,12 +1503,35 @@ object MobBridge {
     // pinned to a specific device via setPreferredDevice using an id from
     // audio_pcm_list_devices — no global comm-route lock, so two domains
     // (USB modem + BLE voice) can run concurrently as independent streams.
+    //
+    // Design principle: this layer CLASSIFIES and REPORTS hardware facts as
+    // typed events; it never DECIDES policy. Recovery, T/R gating, and TX
+    // inhibition all live in the BEAM-side supervising GenServer. Concretely:
+    //   * read() return codes are classified (positive / 0 / ERROR_DEAD_OBJECT
+    //     / other-error) and surfaced, never silently swallowed.
+    //   * a running-RMS zero-detector emits edge-triggered silent/active facts
+    //     (interpretation — fault vs expected-during-TX — is Elixir's call).
+    //   * an AudioRecordingCallback surfaces framework silencing/re-routing.
+    //   * the writer is a single per-session thread draining a bounded queue;
+    //     on overflow it drops-and-counts (never blocks the DSP producer) and
+    //     surfaces the dropped count as telemetry.
     private data class PcmSession(
         val record: AudioRecord?,
         val track: AudioTrack?,
         val running: AtomicBoolean,
-        var readThread: Thread?,
-        val frameBytes: Int
+        @Volatile var readThread: Thread?,
+        // Writer side: a single consumer thread draining a bounded queue.
+        val writeQueue: java.util.concurrent.ArrayBlockingQueue<ByteArray>,
+        @Volatile var writeThread: Thread?,
+        val dropped: AtomicInteger,
+        // Recording-config monitoring (registered before startRecording).
+        @Volatile var recordingCallback: AudioManager.AudioRecordingCallback?,
+        // Zero-detector edge state: true once we've emitted :silent and are
+        // waiting for audio to resume before emitting :active again.
+        @Volatile var silent: Boolean,
+        val silenceEpsilon: Double,
+        val silenceWindowChunks: Int,
+        @Volatile var lowChunkRun: Int
     )
     private val pcmSessions = ConcurrentHashMap<Int, PcmSession>()
     private val pcmNextSession = AtomicInteger(1)
@@ -1538,6 +1561,7 @@ object MobBridge {
                 o.put("id", d.id)
                 o.put("type", d.type)
                 o.put("product_name", d.productName?.toString() ?: "")
+                o.put("address", try { d.address ?: "" } catch (e: Throwable) { "" })
                 o.put("is_source", d.isSource)
                 o.put("is_sink", d.isSink)
                 o.put("is_usb", d.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
@@ -1557,12 +1581,22 @@ object MobBridge {
     //   channels    (Int, 1|2, default 1)
     //   record_device_id (Int, optional) — pin capture via setPreferredDevice
     //   play_device_id   (Int, optional) — pin playback via setPreferredDevice
-    //   unprocessed (Bool, default true) — UNPROCESSED source for the modem
+    //   processing  (String, "raw"|"voice", default "raw") — "raw" requests
+    //               UNPROCESSED (no AGC/NS/AEC; also keeps the stream NON
+    //               privacy-sensitive so two streams stay concurrently
+    //               capturable); "voice" requests VOICE_RECOGNITION.
     //   chunk_frames (Int, default 1024) — capture delivery granularity
-    // Delivers: {audio_pcm, opened, "<session>"} on success, then streams
-    // captured PCM up via nativeDeliverAudioPcmData(pid, session, bytes, n).
+    //   silence_epsilon (Double, default 0.01) — RMS (0..1 full-scale) below
+    //               which a chunk counts as "low"; sustained low → :silent.
+    //   silence_window_ms (Int, default 500) — how long sustained-low before
+    //               emitting :silent (converted to a chunk count).
+    //   write_queue_chunks (Int, default 32) — bounded writer queue depth.
+    // Delivers {audio_pcm, opened, json} on success (with requested-vs-actual
+    // device/format), then streams captured PCM via nativeDeliverAudioPcmData.
     @JvmStatic
     fun audio_pcm_open(pid: Long, optsJson: String) {
+        var record: AudioRecord? = null
+        var track: AudioTrack? = null
         try {
             val opts = JSONObject(optsJson)
             val sampleRate = opts.optInt("sample_rate", 48000)
@@ -1571,8 +1605,17 @@ object MobBridge {
                 opts.getInt("record_device_id") else -1
             val playDevId  = if (opts.has("play_device_id") && !opts.isNull("play_device_id"))
                 opts.getInt("play_device_id") else -1
-            val unprocessed = opts.optBoolean("unprocessed", true)
+            // processing: "raw" (UNPROCESSED) | "voice" (VOICE_RECOGNITION).
+            // Back-compat: a literal unprocessed:false maps to "voice".
+            val processing = when {
+                opts.has("processing") -> opts.optString("processing", "raw")
+                opts.has("unprocessed") && !opts.optBoolean("unprocessed", true) -> "voice"
+                else -> "raw"
+            }
             val chunkFrames = opts.optInt("chunk_frames", 1024)
+            val silenceEpsilon = opts.optDouble("silence_epsilon", 0.01)
+            val silenceWindowMs = opts.optInt("silence_window_ms", 500)
+            val writeQueueChunks = opts.optInt("write_queue_chunks", 32).coerceAtLeast(1)
 
             val am = pcmAudioManager() ?: run {
                 nativeDeliverAtom3(pid, "audio_pcm", "error", "no_audio_manager"); return
@@ -1582,21 +1625,30 @@ object MobBridge {
             val outChMask = if (channels >= 2) AudioFormat.CHANNEL_OUT_STEREO else AudioFormat.CHANNEL_OUT_MONO
             val encoding  = AudioFormat.ENCODING_PCM_16BIT
             val bytesPerFrame = 2 * (if (channels >= 2) 2 else 1)
+            // chunks per silence window (at least 1), for the zero-detector.
+            val chunkMs = (chunkFrames.toDouble() / sampleRate.toDouble()) * 1000.0
+            val silenceWindowChunks = maxOf(1, Math.round(silenceWindowMs / maxOf(1.0, chunkMs)).toInt())
 
-            // Pick the capture source: UNPROCESSED (raw, no AGC/NS/AEC) for the
-            // modem; fall back to VOICE_RECOGNITION (minimally processed) then
-            // DEFAULT if the platform/route declines UNPROCESSED.
+            // Pick the capture source. "raw" → UNPROCESSED (no AGC/NS/AEC, and
+            // critically NOT privacy-sensitive, so concurrent capture with a
+            // second stream is permitted). Fall back to VOICE_RECOGNITION if
+            // the platform/route declines UNPROCESSED. We never call
+            // setPrivacySensitive(true) — that would let one stream silence the
+            // other under the concurrent-capture policy.
             val supportsUnproc = am.getProperty(
                 AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED) == "true"
             val source = when {
-                unprocessed && supportsUnproc -> MediaRecorder.AudioSource.UNPROCESSED
-                unprocessed                   -> MediaRecorder.AudioSource.VOICE_RECOGNITION
-                else                          -> MediaRecorder.AudioSource.DEFAULT
+                processing == "raw" && supportsUnproc -> MediaRecorder.AudioSource.UNPROCESSED
+                processing == "raw"                   -> MediaRecorder.AudioSource.VOICE_RECOGNITION
+                else                                  -> MediaRecorder.AudioSource.VOICE_RECOGNITION
             }
 
             val minIn = AudioRecord.getMinBufferSize(sampleRate, inChMask, encoding)
+            if (minIn <= 0) {
+                nativeDeliverAtom3(pid, "audio_pcm", "error", "bad_record_format"); return
+            }
             val inBuf = maxOf(minIn, chunkFrames * bytesPerFrame * 4)
-            val record = AudioRecord.Builder()
+            record = AudioRecord.Builder()
                 .setAudioSource(source)
                 .setAudioFormat(AudioFormat.Builder()
                     .setEncoding(encoding).setSampleRate(sampleRate).setChannelMask(inChMask).build())
@@ -1605,8 +1657,12 @@ object MobBridge {
             if (recDevId >= 0) pcmFindDevice(am, recDevId, true)?.let { record.setPreferredDevice(it) }
 
             val minOut = AudioTrack.getMinBufferSize(sampleRate, outChMask, encoding)
+            if (minOut <= 0) {
+                record.release()
+                nativeDeliverAtom3(pid, "audio_pcm", "error", "bad_play_format"); return
+            }
             val outBuf = maxOf(minOut, chunkFrames * bytesPerFrame * 4)
-            val track = AudioTrack.Builder()
+            track = AudioTrack.Builder()
                 .setAudioAttributes(AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
@@ -1618,82 +1674,225 @@ object MobBridge {
             if (playDevId >= 0) pcmFindDevice(am, playDevId, false)?.let { track.setPreferredDevice(it) }
 
             if (record.state != AudioRecord.STATE_INITIALIZED) {
+                record.release(); track.release()
                 nativeDeliverAtom3(pid, "audio_pcm", "error", "record_init_failed"); return
             }
             if (track.state != AudioTrack.STATE_INITIALIZED) {
+                record.release(); track.release()
                 nativeDeliverAtom3(pid, "audio_pcm", "error", "track_init_failed"); return
             }
 
             val sid = pcmNextSession.getAndIncrement()
             val running = AtomicBoolean(true)
-            val session = PcmSession(record, track, running, null, chunkFrames * bytesPerFrame)
+            val session = PcmSession(
+                record = record,
+                track = track,
+                running = running,
+                readThread = null,
+                writeQueue = java.util.concurrent.ArrayBlockingQueue(writeQueueChunks),
+                writeThread = null,
+                dropped = AtomicInteger(0),
+                recordingCallback = null,
+                silent = false,
+                silenceEpsilon = silenceEpsilon,
+                silenceWindowChunks = silenceWindowChunks,
+                lowChunkRun = 0
+            )
+
+            // Register the recording-config callback BEFORE startRecording so we
+            // observe the first config. It fires only while audio flows, hence
+            // the independent zero-detector below covers the silenced case.
+            val rec = record
+            val exec = java.util.concurrent.Executors.newSingleThreadExecutor()
+            val cb = object : AudioManager.AudioRecordingCallback() {
+                override fun onRecordingConfigChanged(configs: MutableList<android.media.AudioRecordingConfiguration>?) {
+                    if (configs == null) return
+                    val mySession = rec.audioSessionId
+                    val cfg = configs.firstOrNull { it.clientAudioSessionId == mySession } ?: return
+                    val silenced = try { cfg.isClientSilenced } catch (e: Throwable) { false }
+                    val activeId = try { cfg.audioDevice?.id ?: -1 } catch (e: Throwable) { -1 }
+                    val o = JSONObject()
+                    o.put("session", sid)
+                    o.put("silenced", silenced)
+                    o.put("active_device_id", activeId)
+                    nativeDeliverFileResult(pid, "audio_pcm", "route_changed", o.toString())
+                }
+            }
+            try {
+                record.registerAudioRecordingCallback(exec, cb)
+                session.recordingCallback = cb
+            } catch (e: Throwable) {
+                // Non-fatal: monitoring is best-effort; the zero-detector still runs.
+            }
 
             track.play()
             record.startRecording()
 
+            // ── Read thread: classify read() return codes, run the
+            //    zero-detector, deliver PCM. Never swallow negative codes.
+            val maxAmp = 32768.0
             val readThread = Thread {
                 val buf = ByteArray(chunkFrames * bytesPerFrame)
-                while (running.get()) {
+                loop@ while (running.get()) {
                     val n = try {
                         record.read(buf, 0, buf.size, AudioRecord.READ_BLOCKING)
                     } catch (e: Exception) {
-                        if (running.get()) nativeDeliverAtom3(pid, "audio_pcm", "error", "read_failed")
-                        break
+                        if (running.get()) nativeDeliverAtom3(pid, "audio_pcm", "error", "read_exception")
+                        break@loop
                     }
-                    if (n > 0) {
-                        val out = if (n == buf.size) buf else buf.copyOf(n)
-                        nativeDeliverAudioPcmData(pid, sid, out, n)
+                    when {
+                        n > 0 -> {
+                            // Zero-detector: RMS over the chunk (s16le), normalised.
+                            var sumSq = 0.0
+                            var i = 0
+                            val lim = n - 1
+                            while (i < lim) {
+                                val lo = buf[i].toInt() and 0xFF
+                                val hi = buf[i + 1].toInt()
+                                val sample = (hi shl 8) or lo
+                                val v = sample.toDouble() / maxAmp
+                                sumSq += v * v
+                                i += 2
+                            }
+                            val frames = (n / 2).coerceAtLeast(1)
+                            val rms = Math.sqrt(sumSq / frames)
+                            if (rms < session.silenceEpsilon) {
+                                session.lowChunkRun += 1
+                                if (!session.silent && session.lowChunkRun >= session.silenceWindowChunks) {
+                                    session.silent = true
+                                    nativeDeliverAtom3(pid, "audio_pcm", "stream_silent", sid.toString())
+                                }
+                            } else {
+                                session.lowChunkRun = 0
+                                if (session.silent) {
+                                    session.silent = false
+                                    nativeDeliverAtom3(pid, "audio_pcm", "stream_active", sid.toString())
+                                }
+                            }
+                            val out = if (n == buf.size) buf.copyOf() else buf.copyOf(n)
+                            nativeDeliverAudioPcmData(pid, sid, out, n)
+                        }
+                        n == 0 -> { /* nothing this tick — loop */ }
+                        n == AudioRecord.ERROR_DEAD_OBJECT -> {
+                            if (running.get()) nativeDeliverAtom3(pid, "audio_pcm", "error", "dead")
+                            break@loop
+                        }
+                        n == AudioRecord.ERROR_INVALID_OPERATION -> {
+                            if (running.get()) nativeDeliverAtom3(pid, "audio_pcm", "error", "invalid_state")
+                            break@loop
+                        }
+                        n == AudioRecord.ERROR_BAD_VALUE -> {
+                            if (running.get()) nativeDeliverAtom3(pid, "audio_pcm", "error", "bad_value")
+                            break@loop
+                        }
+                        else -> {
+                            if (running.get()) nativeDeliverAtom3(pid, "audio_pcm", "error", "read_error")
+                            break@loop
+                        }
                     }
                 }
             }.apply { name = "MobPcmRead-$sid"; isDaemon = true }
             session.readThread = readThread
+
+            // ── Writer thread: single consumer, ordered, draining the bounded
+            //    queue with a blocking take(). Producers never block (see
+            //    audio_pcm_write drop-and-count); this preserves frame order.
+            val writeThread = Thread {
+                while (running.get()) {
+                    val chunk = try {
+                        session.writeQueue.poll(200, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    } catch (e: InterruptedException) {
+                        break
+                    } ?: continue
+                    try {
+                        var off = 0
+                        while (off < chunk.size && running.get()) {
+                            val w = track.write(chunk, off, chunk.size - off, AudioTrack.WRITE_BLOCKING)
+                            if (w < 0) {
+                                if (running.get()) {
+                                    val reason = if (w == AudioTrack.ERROR_DEAD_OBJECT) "dead" else "write_error"
+                                    nativeDeliverAtom3(pid, "audio_pcm", "error", reason)
+                                }
+                                break
+                            }
+                            off += w
+                        }
+                    } catch (e: Exception) {
+                        if (running.get()) nativeDeliverAtom3(pid, "audio_pcm", "error", "write_exception")
+                    }
+                }
+            }.apply { name = "MobPcmWrite-$sid"; isDaemon = true }
+            session.writeThread = writeThread
+
             pcmSessions[sid] = session
             readThread.start()
+            writeThread.start()
 
-            // Report routed devices so Elixir can verify the pins took (the
-            // HAL may silently re-route; getRoutedDevice() is the ground truth).
+            // Report requested-vs-actual so Elixir can verify the pins took
+            // (the HAL may silently re-route; getRoutedDevice() is ground truth).
             val rr = record.routedDevice?.id ?: -1
             val rt = track.routedDevice?.id ?: -1
             val res = JSONObject()
             res.put("session", sid)
             res.put("source", source)
+            res.put("processing", processing)
+            res.put("requested_record_id", recDevId)
+            res.put("requested_play_id", playDevId)
             res.put("record_routed_id", rr)
             res.put("play_routed_id", rt)
+            res.put("sample_rate", sampleRate)
+            res.put("channels", channels)
             nativeDeliverFileResult(pid, "audio_pcm", "opened", res.toString())
         } catch (e: Exception) {
+            try { record?.release() } catch (_: Exception) {}
+            try { track?.release() } catch (_: Exception) {}
             nativeDeliverAtom3(pid, "audio_pcm", "error", "open_failed")
         }
     }
 
-    // Enqueue PCM for playback on the session's AudioTrack. Runs the blocking
-    // write off the caller thread.
+    // Enqueue PCM for playback/TX on the session's bounded writer queue. Never
+    // blocks the caller: on overflow we drop the OLDEST queued chunk to make
+    // room (keeping the freshest audio flowing) and count the drop, surfacing
+    // the running total as telemetry. Blocking the producer here would stall
+    // the upstream DSP and worsen the glitch — the audio-engineering-correct
+    // behaviour is drop-and-count (cf. AAudio/Oboe XRun semantics).
     @JvmStatic
     fun audio_pcm_write(pid: Long, sessionId: Int, bytes: ByteArray) {
         val s = pcmSessions[sessionId] ?: run {
             nativeDeliverAtom3(pid, "audio_pcm", "error", "no_session"); return
         }
-        val track = s.track ?: return
-        Thread {
-            try {
-                track.write(bytes, 0, bytes.size, AudioTrack.WRITE_BLOCKING)
-            } catch (e: Exception) {
-                if (s.running.get()) nativeDeliverAtom3(pid, "audio_pcm", "error", "write_failed")
-            }
-        }.apply { isDaemon = true }.start()
+        if (bytes.isEmpty()) return
+        if (!s.writeQueue.offer(bytes)) {
+            // Full: drop oldest to make room for the newest, count it, and
+            // surface the running total so Elixir sees the backpressure fault.
+            s.writeQueue.poll()
+            val total = s.dropped.incrementAndGet()
+            if (!s.writeQueue.offer(bytes)) s.dropped.incrementAndGet()
+            nativeDeliverAtom3(pid, "audio_pcm", "write_overflow", total.toString())
+        }
     }
 
-    // Stop and release a session's streams.
+    // Stop and release a session's streams. Tears down in reverse order of
+    // open(): unregister the callback before stop/release; signal threads;
+    // drain the queue.
     @JvmStatic
     fun audio_pcm_close(sessionId: Int) {
         val s = pcmSessions.remove(sessionId) ?: return
         s.running.set(false)
+        val cb = s.recordingCallback
+        if (cb != null) {
+            try { s.record?.unregisterAudioRecordingCallback(cb) } catch (e: Exception) {}
+            s.recordingCallback = null
+        }
+        try { s.writeThread?.interrupt() } catch (e: Exception) {}
+        try { s.writeThread?.join(500) } catch (e: Exception) {}
         try { s.readThread?.join(500) } catch (e: Exception) {}
+        s.writeQueue.clear()
         try { s.record?.stop() } catch (e: Exception) {}
         try { s.record?.release() } catch (e: Exception) {}
         try { s.track?.stop() } catch (e: Exception) {}
         try { s.track?.release() } catch (e: Exception) {}
     }
-
     @JvmStatic external fun nativeDeliverAudioPcmData(pid: Long, session: Int, bytes: ByteArray, n: Int)
 
     // Native callbacks — implemented in beam_jni.c → mob_deliver_vendor_usb_*.
