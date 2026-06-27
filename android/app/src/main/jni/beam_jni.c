@@ -9,6 +9,9 @@
 // deps/mob/.../mob_beam.h so the app build stays free of dependency edits;
 // fold this into mob_beam.h when upstreaming the PCM subsystem.
 void mob_deliver_audio_pcm_data(jlong pid, int session, const uint8_t *bytes, size_t nbytes);
+// Same rationale: control-transfer result delivery (mob_deliver_vendor_usb_control_result
+// in mob_nif.zig). Forward-declared locally to keep the app build dependency-edit free.
+void mob_deliver_vendor_usb_control_result(jlong pid, int session, int result, const uint8_t *bytes, size_t nbytes);
 
 #define BRIDGE_CLASS  "com/example/minutemodem_mobile/MobBridge"
 #define APP_MODULE    "minutemodem_mobile"
@@ -252,6 +255,20 @@ Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverVendorUsbEvent(JNIEn
     mob_deliver_vendor_usb_event(pid, (int)session_id, ct, cr);
     (*env)->ReleaseStringUTFChars(env, tag, ct);
     if (cr) (*env)->ReleaseStringUTFChars(env, reason, cr);
+}
+
+JNIEXPORT void JNICALL
+Java_com_example_minutemodem_1mobile_MobBridge_nativeDeliverVendorUsbControlResult(JNIEnv* env, jclass cls,
+    jlong pid, jint session_id, jint result, jbyteArray bytes, jint len) {
+    if (!bytes || len <= 0) {
+        mob_deliver_vendor_usb_control_result(pid, (int)session_id, (int)result, NULL, 0);
+        return;
+    }
+    jbyte* buf = (*env)->GetByteArrayElements(env, bytes, NULL);
+    if (buf) {
+        mob_deliver_vendor_usb_control_result(pid, (int)session_id, (int)result, (const uint8_t*)buf, (size_t)len);
+        (*env)->ReleaseByteArrayElements(env, bytes, buf, JNI_ABORT);
+    }
 }
 
 // ââ Mob.AudioPcm capture delivery thunk ââ

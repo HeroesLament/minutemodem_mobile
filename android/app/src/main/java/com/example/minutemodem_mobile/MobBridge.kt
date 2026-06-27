@@ -1424,6 +1424,47 @@ object MobBridge {
         }
     }
 
+    // Generic USB control transfer. Carries the full
+    // UsbDeviceConnection.controlTransfer signature so device-specific
+    // protocols (CP2102 line-coding + RTS/DTR for PTT, etc.) live entirely
+    // in Elixir. `bytes` is the control payload for host->device requests, or
+    // a buffer whose length sizes the read for device->host requests
+    // (requestType bit 7 set). Result (controlTransfer return + any read
+    // bytes) flows back via nativeDeliverVendorUsbControlResult.
+    @JvmStatic
+    fun vendor_usb_control_transfer(
+        pid: Long, sessionId: Int, requestType: Int, request: Int,
+        value: Int, index: Int, bytes: ByteArray, timeoutMs: Int
+    ) {
+        try {
+            val s = usbSessions[sessionId] ?: run {
+                nativeDeliverVendorUsbEvent(pid, sessionId, "error", "no_session"); return
+            }
+            // Device->host transfers (bit 7 of bmRequestType) read into the
+            // buffer; copy so the caller's array isn't aliased across threads.
+            val isIn = (requestType and 0x80) != 0
+            val buf = bytes.copyOf()
+            val len = buf.size
+
+            // Off the caller thread — controlTransfer blocks up to timeoutMs.
+            // The NIF is already DIRTY_JOB_IO_BOUND.
+            Thread {
+                val result = try {
+                    s.connection.controlTransfer(requestType, request, value, index, buf, len, timeoutMs)
+                } catch (e: Exception) {
+                    nativeDeliverVendorUsbEvent(pid, sessionId, "error", "control_failed"); return@Thread
+                }
+                // For device->host, return the bytes actually read (result >= 0
+                // is the count); for host->device, no read payload.
+                val outBytes = if (isIn && result > 0) buf.copyOf(result) else ByteArray(0)
+                nativeDeliverVendorUsbControlResult(pid, sessionId, result, outBytes, outBytes.size)
+            }.apply { name = "MobUsbControl-$sessionId" }.start()
+        } catch (e: Exception) {
+            android.util.Log.w("MobBridge", "vendor_usb_control_transfer failed: ${e.message}", e)
+            nativeDeliverVendorUsbEvent(pid, -1, "error", "exception")
+        }
+    }
+
     // Helper: build the public `device` JSON shape used everywhere.
     private fun usbDeviceJson(dev: UsbDevice): JSONObject {
         return JSONObject().apply {
@@ -1907,6 +1948,8 @@ object MobBridge {
         pid: Long, sessionId: Int, bytesWritten: Int)
     @JvmStatic external fun nativeDeliverVendorUsbEvent(
         pid: Long, sessionId: Int, tag: String, reason: String)
+    @JvmStatic external fun nativeDeliverVendorUsbControlResult(
+        pid: Long, sessionId: Int, result: Int, bytes: ByteArray, n: Int)
 }
 
 // ── Composables ───────────────────────────────────────────────────────────────
