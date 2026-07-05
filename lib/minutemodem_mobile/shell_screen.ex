@@ -33,6 +33,7 @@ defmodule MinutemodemMobile.ShellScreen do
     LinkQualityScreen,
     LinkQuality,
     NetworkTimeScreen,
+    LinkProtectionScreen,
     Gnss
   }
 
@@ -193,6 +194,7 @@ defmodule MinutemodemMobile.ShellScreen do
         %{id: "network", label: "NETWORK", icon: "list"},
         %{id: "rig", label: "RIG", icon: "radio"},
         %{id: "linking", label: "LINKING", icon: "link"},
+        %{id: "protection", label: "Link Protection", icon: "lock"},
         %{id: "contacts", label: "CONTACTS", icon: "person"},
         %{id: "quality", label: "QUALITY", icon: "insights"},
         %{id: "time", label: "TIME", icon: "schedule"}
@@ -203,6 +205,7 @@ defmodule MinutemodemMobile.ShellScreen do
       {tab_body("network", assigns, &NetworkScreen.render/1)}
       {tab_body("rig", assigns, &RigScreen.render/1)}
       {tab_body("linking", assigns, &LinkingScreen.render/1)}
+      {tab_body("protection", assigns, &LinkProtectionScreen.render/1)}
       {tab_body("contacts", assigns, &ContactsScreen.render/1)}
       {tab_body("quality", assigns, &LinkQualityScreen.render/1)}
       {tab_body("time", assigns, &NetworkTimeScreen.render/1)}
@@ -480,6 +483,59 @@ defmodule MinutemodemMobile.ShellScreen do
     end
   end
 
+  # tTLC field lost focus — snap the entered value to the nearest 13.33 ms
+  # multiple (Table G-II) and write it back so the field shows the snapped value.
+  # on_change has already persisted the raw text, so we read the current param.
+  # Android delivers on_blur as {:blur, tag} (mob_beam.h), not {:tap, tag}.
+  def handle_info({:blur, {:tlc_snap}}, socket) do
+    with net when not is_nil(net) <- socket.assigns.net,
+         raw <- Map.get(socket.assigns.params || %{}, "t_tlc", ""),
+         v when is_number(v) and v > 0 <- parse_num(raw) do
+      snapped = Float.round(max(round(v / 13.33), 1) * 13.33, 2)
+
+      case Networks.update_params(net, %{"t_tlc" => to_string(snapped)}) do
+        {:ok, _} -> {:noreply, load(socket, [])}
+        {:error, _} -> {:noreply, socket}
+      end
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  # A 16-bit WALE hex field (Net Control PU, Self Address) lost focus — normalize
+  # valid hex to canonical 0xNNNN (uppercase, zero-padded). Invalid input (non-hex
+  # / out of range) is left untouched so the red alert stays and the operator can
+  # correct it. Keyed by the param name so one handler serves every hex field.
+  def handle_info({:blur, {:hex_snap, key}}, socket) do
+    with net when not is_nil(net) <- socket.assigns.net,
+         raw <- Map.get(socket.assigns.params || %{}, key, ""),
+         {:ok, norm} when norm != raw <- normalize_hex(raw) do
+      case Networks.update_params(net, %{key => norm}) do
+        {:ok, _} -> {:noreply, load(socket, [])}
+        {:error, _} -> {:noreply, socket}
+      end
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  # Normalize a 16-bit WALE hex address to "0xNNNN", or :error if not valid hex
+  # / out of range (blank is left as-is → treated as the 0x0000 default).
+  defp normalize_hex(raw) do
+    s =
+      raw
+      |> to_string()
+      |> String.trim()
+      |> String.replace_prefix("0x", "")
+      |> String.replace_prefix("0X", "")
+
+    if s != "" and Regex.match?(~r/^[0-9a-fA-F]+$/, s) and String.length(s) <= 4 do
+      {:ok, "0x" <> String.pad_leading(String.upcase(s), 4, "0")}
+    else
+      :error
+    end
+  end
+
   # -- Linking tab events ---------------------------------------------------
 
   def handle_info({:change, :call_addr_changed, value}, socket) do
@@ -542,6 +598,34 @@ defmodule MinutemodemMobile.ShellScreen do
 
         {:error, reason} ->
           {:noreply, Mob.Socket.assign(socket, status: "CALL FAILED: #{inspect(reason)}")}
+      end
+    else
+      {:error, :bad_addr} ->
+        {:noreply, Mob.Socket.assign(socket, status: "INVALID DEST ADDRESS")}
+
+      {:error, :not_callable} ->
+        {:noreply, Mob.Socket.assign(socket, status: "TARGET HAS NO CALLABLE ADDRESS")}
+
+      {:error, socket} when is_map(socket) ->
+        {:noreply, socket}
+    end
+  end
+
+  # Two-way LQA exchange (G.5.5.10.2): call the target with Traffic Type = LQA
+  # Exchange; the peer replies with its measured SNR and the link auto-terminates.
+  # Same target resolution as CALL.
+  def handle_info({:tap, {:ale_lqa}}, socket) do
+    with {:ok, socket} <- ensure_ale_started(socket),
+         {:ok, dest} <- resolve_call_dest(socket) do
+      rig_id = socket.assigns.rig_id
+
+      case safe_link(fn -> Link.lqa_exchange(rig_id, dest, call_opts(socket)) end) do
+        :ok ->
+          {:noreply,
+           Mob.Socket.assign(socket, status: "LQA EXCHANGE 0x#{Integer.to_string(dest, 16)}")}
+
+        {:error, reason} ->
+          {:noreply, Mob.Socket.assign(socket, status: "LQA FAILED: #{inspect(reason)}")}
       end
     else
       {:error, :bad_addr} ->
@@ -729,7 +813,7 @@ defmodule MinutemodemMobile.ShellScreen do
       end
 
     time_fields =
-      if socket.assigns[:active_tab] == "time" do
+      if socket.assigns[:active_tab] in ["time", "protection"] do
         [
           time_status: safe_time(fn -> Clock.status() end),
           gnss_status: safe_time(fn -> Gnss.status() end)
@@ -797,7 +881,11 @@ defmodule MinutemodemMobile.ShellScreen do
            ale_render_mono: now
          )}
 
-      on_linking and now - last >= 1000 ->
+      # On the LINKING tab, refresh the live freq/channel readout on essentially
+      # every dwell hop so it tracks the radio. Renders are now active-tab-only
+      # (cheap), so a small 200 ms floor is enough to cap a pathologically fast
+      # scan without letting the readout lag the VFO.
+      on_linking and now - last >= 200 ->
         {:noreply, Mob.Socket.assign(socket, ale_info: info, ale_render_mono: now)}
 
       true ->
@@ -909,11 +997,100 @@ defmodule MinutemodemMobile.ShellScreen do
             %{freq_hz: c.freq_hz, name: c.name || "", mode: chan_mode_atom(c.mode)}
           end)
 
-        if chs == [], do: [], else: [channels: chs]
+        if chs == [],
+          do: [],
+          else:
+            [channels: chs] ++
+              timing_opts(socket.assigns[:params]) ++
+              sounding_opts(socket.assigns[:params])
     end
   end
 
   defp call_opts(socket), do: scan_opts(socket)
+
+  # Periodic sounding (one-way LQA, 188-141D G.5.5.10.1). Threads the operator's
+  # sounding enable/interval/waveform into the Link so it beacons LSU_Status on
+  # each channel while scanning. Waveform tracks the net's ALE waveform setting.
+  defp sounding_opts(params) do
+    params = params || %{}
+    enabled = Map.get(params, "sounding_enabled", "off") == "on"
+
+    wf = if Map.get(params, "ale_waveform", "deep") == "fast", do: :fast, else: :deep
+    base = [sounding_enabled: enabled, sounding_waveform: wf]
+
+    case Integer.parse(String.trim(to_string(Map.get(params, "sounding_interval", "")))) do
+      {n, _} when n > 0 -> [{:sounding_interval_s, n} | base]
+      _ -> base
+    end
+  end
+
+  # Scan-timing opts from the active net's params, read by Minutewave.ALE.Link.
+  # Sync and async take different dwell inputs (188-141D G.4.1.2):
+  #   * sync  → Synchronous Dwell Speed (SDS 1/2/3); the Link computes D=1350/SDS
+  #   * async → Minimum Dwell Time (free ms)
+  defp timing_opts(params) do
+    params = params || %{}
+
+    base =
+      if Map.get(params, "scan_timing", "sync") == "async" do
+        dwell =
+          case Integer.parse(String.trim(to_string(Map.get(params, "scan_dwell_ms", "")))) do
+            {n, _} when n > 0 -> [scan_dwell_ms: n]
+            _ -> []
+          end
+
+        [scan_sync_pref: :async] ++ dwell
+      else
+        sds =
+          case Integer.parse(to_string(Map.get(params, "scan_sds", "3"))) do
+            {n, _} when n in 1..3 -> n
+            _ -> 3
+          end
+
+        [scan_sync_pref: :sync, scan_sds: sds]
+      end
+
+    base ++ inp_opts(params)
+  end
+
+  # Configurable timing INPs (188-141D Table G-II) read from net params. Only
+  # keys the operator actually set are passed; the Link keeps its spec defaults
+  # for the rest. The param key equals the Link opt key.
+  @inp_param_keys ~w(t_lbt t_lbr t_response t_traffic t_activity t_tune t_tlc t_sync)
+
+  defp inp_opts(params) do
+    Enum.reduce(@inp_param_keys, [], fn key, acc ->
+      case parse_num(Map.get(params, key, "")) do
+        nil -> acc
+        n -> [{String.to_existing_atom(key), inp_value(key, n)} | acc]
+      end
+    end)
+  end
+
+  # tTLC must be a multiple of the 13.33 ms TLC block (Table G-II: n × 13.33);
+  # snap whatever the operator entered to the nearest valid multiple.
+  defp inp_value("t_tlc", v) when v > 0, do: Float.round(max(round(v / 13.33), 1) * 13.33, 2)
+  defp inp_value("t_tlc", _), do: 13.33
+  defp inp_value(_key, v), do: v
+
+  # Parse a numeric param: integer if whole, float for values like tTLC=13.33.
+  defp parse_num(v) do
+    s = String.trim(to_string(v))
+
+    cond do
+      s == "" ->
+        nil
+
+      match?({_, ""}, Integer.parse(s)) ->
+        elem(Integer.parse(s), 0)
+
+      match?({_, ""}, Float.parse(s)) ->
+        elem(Float.parse(s), 0)
+
+      true ->
+        nil
+    end
+  end
 
   defp chan_mode_atom("lsb"), do: :lsb
   defp chan_mode_atom("am"), do: :am

@@ -409,11 +409,15 @@ defmodule MinutemodemMobile.LinkingScreen do
 
   defp aux_controls(assigns) do
     ~MOB"""
-    <Row fill_width={true}>
-      {button("SOUND", {:ale_sound}, @amber, @panel)}
+    <Column fill_width={true}>
+      <Row fill_width={true}>
+        {button("SOUND", {:ale_sound}, @amber, @panel)}
+        <Spacer size={10} />
+        {button("LQA EXCH", {:ale_lqa}, @amber, @panel)}
+      </Row>
       <Spacer size={10} />
       {terminate_button(assigns)}
-    </Row>
+    </Column>
     """
   end
 

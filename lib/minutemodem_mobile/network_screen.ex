@@ -16,6 +16,10 @@ defmodule MinutemodemMobile.NetworkScreen do
   @green 0xFF33C24A
   @active_bg 0xFF0E1A0E
   @disabled 0xFF555555
+  @red 0xFFD24A4A
+
+  # tTLC quantum (Table G-II: tTLC = n × 13.33 ms).
+  @tlc_unit 13.33
 
   # Render-only module: ShellScreen owns mount/state/events and calls
   # render/1 with the needed assigns. mount/3 kept minimal for the behaviour.
@@ -61,6 +65,7 @@ defmodule MinutemodemMobile.NetworkScreen do
 
   defp param_fields("ale", params, channels) do
     generation = Map.get(params, "generation", Network.default_generation())
+    scan_mode = Map.get(params, "scan_timing", "sync")
 
     ~MOB"""
     <Column fill_width={true}>
@@ -69,7 +74,7 @@ defmodule MinutemodemMobile.NetworkScreen do
       {segmented("ALE WAVEFORM (ALL PDUs)", "ale_waveform",
         [{"DEEP", "deep"}, {"FAST", "fast"}], Map.get(params, "ale_waveform", "deep"))}
       <Spacer size={14} />
-      {field("SELF ADDRESS", "self_addr", Map.get(params, "self_addr", ""), "e.g. 1001")}
+      {hex_field("SELF ADDRESS (WALE ADDR)", "self_addr", params)}
       <Spacer size={20} />
       <Divider color={:border} />
       <Spacer size={16} />
@@ -77,7 +82,33 @@ defmodule MinutemodemMobile.NetworkScreen do
       <Spacer size={20} />
       <Divider color={:border} />
       <Spacer size={16} />
+      <Text text="SOUNDING (ONE-WAY LQA)" text_size={:sm} text_color={@amber} />
+      <Spacer size={12} />
+      {segmented("PERIODIC SOUNDING", "sounding_enabled", [{"ON", "on"}, {"OFF", "off"}], Map.get(params, "sounding_enabled", "off"))}
+      <Spacer size={6} />
+      <Text text="Beacons an LSU_Status on each channel while scanning (LBT first)." text_size={:sm} text_color={:muted} padding={4} />
+      <Spacer size={12} />
       {field("SOUNDING INTERVAL (S)", "sounding_interval", Map.get(params, "sounding_interval", ""), "300")}
+      <Spacer size={20} />
+      <Divider color={:border} />
+      <Spacer size={16} />
+      <Text text="SCAN TIMING" text_size={:sm} text_color={@amber} />
+      <Spacer size={12} />
+      {segmented("MODE", "scan_timing", [{"SYNC", "sync"}, {"ASYNC", "async"}], scan_mode)}
+      <Spacer size={6} />
+      <Text text={scan_timing_hint(scan_mode)} text_size={:sm} text_color={:muted} padding={4} />
+      <Spacer size={12} />
+      {scan_dwell_control(scan_mode, params)}
+      <Spacer size={20} />
+      <Divider color={:border} />
+      <Spacer size={16} />
+      {inp_timing_group(params)}
+      <Spacer size={20} />
+      <Divider color={:border} />
+      <Spacer size={16} />
+      <Text text="NET CONTROL" text_size={:sm} text_color={@amber} />
+      <Spacer size={12} />
+      {net_control_field(params)}
       <Spacer size={20} />
       <Divider color={:border} />
       <Spacer size={16} />
@@ -87,6 +118,170 @@ defmodule MinutemodemMobile.NetworkScreen do
         Map.get(params, "lqa_mode", MinutemodemMobile.LQAPolicy.default_mode()))}
       <Spacer size={6} />
       <Text text={lqa_mode_hint(Map.get(params, "lqa_mode", MinutemodemMobile.LQAPolicy.default_mode()))} text_size={:sm} text_color={:muted} padding={4} />
+    </Column>
+    """
+  end
+
+  # One-line explanation of the currently-selected scan-timing mode.
+  defp scan_timing_hint("async"),
+    do: "FREE-RUNNING — CALLER SENDS A LONGER SCANNING CALL; NO CLOCK NEEDED"
+
+  defp scan_timing_hint(_),
+    do: "LOCKSTEP — ALL STATIONS DWELL TOGETHER (NEEDS GNSS/TOD; AUTO-DEGRADES TO ASYNC IF CLOCK LOST)"
+
+  # Dwell control depends on scan mode (188-141D G.4.1.2):
+  #   * sync  → Synchronous Dwell Speed per Table G-I (D is fixed at 1350/SDS)
+  #   * async → Minimum Dwell Time INP (free ms)
+  defp scan_dwell_control("async", params) do
+    field("MINIMUM DWELL (MS)", "scan_dwell_ms", Map.get(params, "scan_dwell_ms", ""), "500")
+  end
+
+  defp scan_dwell_control(_sync, params) do
+    sds = Map.get(params, "scan_sds", "1")
+
+    ~MOB"""
+    <Column fill_width={true}>
+      {segmented("SYNC DWELL SPEED (SDS)", "scan_sds", [{"SDS 1", "1"}, {"SDS 2", "2"}, {"SDS 3", "3"}], sds)}
+      <Spacer size={6} />
+      <Text text={sds_hint(sds)} text_size={:sm} text_color={:muted} padding={4} />
+    </Column>
+    """
+  end
+
+  # Table G-I: D = 1350 ms / SDS.
+  defp sds_hint("1"), do: "D = 1350 ms — mixed 3G/4G, scans at 3G speed"
+  defp sds_hint("2"), do: "D = 675 ms — supports Fast + Deep WALE"
+  defp sds_hint("3"), do: "D = 450 ms — high-speed data, Fast WALE only"
+  defp sds_hint(_), do: ""
+
+  # tTLC field with a live "snaps to n × 13.33 ms" readout. The operator types
+  # freely; the effective value used by the Link is snapped to the nearest valid
+  # multiple (in ShellScreen.inp_opts), and this hint shows what it will become.
+  defp tlc_field(params) do
+    raw = Map.get(params, "t_tlc", "")
+
+    ~MOB"""
+    <Column fill_width={true}>
+      <Text text="TLC SETTLING — tTLC" text_size={:sm} text_color={:muted} />
+      <Spacer size={4} />
+      <TextField
+        value={raw}
+        placeholder="13.33"
+        keyboard={:default}
+        return_key={:done}
+        on_change={{self(), {:param_change, "t_tlc"}}}
+        on_blur={{self(), {:tlc_snap}}}
+      />
+      <Spacer size={4} />
+      <Text text={tlc_snap_hint(raw)} text_size={:sm} text_color={:muted} padding={4} />
+    </Column>
+    """
+  end
+
+  defp tlc_snap_hint(raw) do
+    case parse_number(raw) do
+      nil ->
+        "n × 13.33 ms (blank = 13.33 default)"
+
+      v when v > 0 ->
+        n = max(round(v / @tlc_unit), 1)
+        "→ snaps to #{Float.round(n * @tlc_unit, 2)} ms (#{n} × 13.33)"
+
+      _ ->
+        "n × 13.33 ms"
+    end
+  end
+
+  # Net Control PU: a 16-bit WALE hex address. The field validates live —
+  # normalizes valid input to 0xNNNN (green), or shows a red alert on a non-hex
+  # character or an out-of-range value.
+  defp net_control_field(params), do: hex_field("NET CONTROL PU (WALE ADDR)", "net_control_pu", params)
+
+  # A 16-bit WALE hex address field (Self Address, Net Control PU). Live-validates
+  # to 0xNNNN (green) or a red alert; snaps the value to canonical form on blur
+  # via {:hex_snap, key} (handled in ShellScreen).
+  defp hex_field(label, key, params) do
+    raw = Map.get(params, key, "")
+    {msg, color} = hex_validate(raw)
+
+    ~MOB"""
+    <Column fill_width={true}>
+      <Text text={label} text_size={:sm} text_color={:muted} />
+      <Spacer size={4} />
+      <TextField
+        value={raw}
+        placeholder="0x0000"
+        keyboard={:default}
+        return_key={:done}
+        on_change={{self(), {:param_change, key}}}
+        on_blur={{self(), {:hex_snap, key}}}
+      />
+      <Spacer size={4} />
+      <Text text={msg} text_size={:sm} text_color={color} padding={4} />
+    </Column>
+    """
+  end
+
+  defp hex_validate(raw) do
+    s =
+      raw
+      |> to_string()
+      |> String.trim()
+      |> String.replace_prefix("0x", "")
+      |> String.replace_prefix("0X", "")
+
+    cond do
+      s == "" ->
+        {"16-bit WALE address (blank = 0x0000)", @disabled}
+
+      not Regex.match?(~r/^[0-9a-fA-F]+$/, s) ->
+        {"⚠ INVALID HEX — only 0-9, A-F (optionally 0x-prefixed)", @red}
+
+      String.length(s) > 4 ->
+        {"⚠ OUT OF RANGE — 16-bit max is 0xFFFF", @red}
+
+      true ->
+        {"→ 0x" <> String.pad_leading(String.upcase(s), 4, "0"), @green}
+    end
+  end
+
+  # Parse a numeric field value (integer or float like 13.33); nil if blank/bad.
+  defp parse_number(v) do
+    s = String.trim(to_string(v))
+
+    cond do
+      s == "" -> nil
+      match?({_, ""}, Integer.parse(s)) -> elem(Integer.parse(s), 0)
+      match?({_, ""}, Float.parse(s)) -> elem(Float.parse(s), 0)
+      true -> nil
+    end
+  end
+
+  # Configurable timing INPs (188-141D Table G-II). Each field persists to net
+  # params under its Link key; blank means "use the spec default." Placeholders
+  # show the Table G-II defaults.
+  defp inp_timing_group(params) do
+    ~MOB"""
+    <Column fill_width={true}>
+      <Text text="INP TIMING (188-141D TABLE G-II)" text_size={:sm} text_color={@amber} />
+      <Spacer size={4} />
+      <Text text="Blank = spec default. Values in ms." text_size={:sm} text_color={:muted} padding={2} />
+      <Spacer size={12} />
+      {field("LISTEN BEFORE TX — tLBT", "t_lbt", Map.get(params, "t_lbt", ""), "400")}
+      <Spacer size={10} />
+      {field("LISTEN BEFORE RESPOND — tLBR", "t_lbr", Map.get(params, "t_lbr", ""), "400")}
+      <Spacer size={10} />
+      {tlc_field(params)}
+      <Spacer size={10} />
+      {field("TUNE TIME — ttune", "t_tune", Map.get(params, "t_tune", ""), "40")}
+      <Spacer size={10} />
+      {field("TIME UNCERTAINTY — tsync", "t_sync", Map.get(params, "t_sync", ""), "36")}
+      <Spacer size={10} />
+      {field("WAIT RESPONSE — tresponse", "t_response", Map.get(params, "t_response", ""), "2000")}
+      <Spacer size={10} />
+      {field("WAIT TRAFFIC — ttraffic", "t_traffic", Map.get(params, "t_traffic", ""), "10000")}
+      <Spacer size={10} />
+      {field("ACTIVITY TIMEOUT — tactivity", "t_activity", Map.get(params, "t_activity", ""), "30000")}
     </Column>
     """
   end
