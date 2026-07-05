@@ -115,12 +115,17 @@ defmodule MinutemodemMobile.Cp2102 do
   """
   @spec set_line_ctl(Mob.Socket.t(), VendorUsb.session(), keyword()) :: Mob.Socket.t()
   def set_line_ctl(socket, session, opts \\ []) do
-    data_bits = Keyword.get(opts, :data_bits, 8)
-    parity = Keyword.get(opts, :parity, 0)
-    stop = Keyword.get(opts, :stop, 0)
+    # Clamp each field to its valid range before packing into the 16-bit wValue,
+    # so a bad opt can never produce an out-of-range value on the USB wire.
+    data_bits = opts |> Keyword.get(:data_bits, 8) |> clamp(5, 8)
+    parity = opts |> Keyword.get(:parity, 0) |> clamp(0, 4)
+    stop = opts |> Keyword.get(:stop, 0) |> clamp(0, 2)
     value = Bitwise.bsl(data_bits, 8) |> Bitwise.bor(Bitwise.bsl(parity, 4)) |> Bitwise.bor(stop)
     set_config(socket, session, @set_line_ctl, value, opts)
   end
+
+  defp clamp(n, lo, hi) when is_integer(n), do: n |> max(lo) |> min(hi)
+  defp clamp(_n, lo, _hi), do: lo
 
   @doc """
   Assert or deassert RTS. On a DigiRig this is the PTT line: `true` keys the

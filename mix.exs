@@ -24,6 +24,7 @@ defmodule MinutemodemMobile.MixProject do
     [
       {:rustler, "~> 0.37"},
       {:minutewave, path: "../minutewave_ex"},
+      {:hamlib_ex, path: "../hamlib_ex"},
       {:mob, "~> 0.7"},
       {:mob_dev, "~> 0.5", only: :dev, runtime: false},
       {:ecto_sqlite3, "~> 0.18"},

@@ -36,7 +36,13 @@ android {
         versionCode 1
         versionName "1.0"
 
-        ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
+        // arm64-v8a only. The target device (OnePlus CPH2451) is arm64,
+        // and hamlib_nif links the NDK-cross-built libhamlib.a which we only
+        // build for aarch64. Dropping armv7 keeps the static-NIF driver table
+        // consistent across every shipped ABI (no per-arch guard needed). To
+        // re-add armv7: cross-build libhamlib.a for arm-linux-androideabi, add
+        // its CC/AR to mob.exs nif_build_env, and restore 'armeabi-v7a' here.
+        ndk { abiFilters 'arm64-v8a' }
 
         externalNativeBuild {
             cmake {

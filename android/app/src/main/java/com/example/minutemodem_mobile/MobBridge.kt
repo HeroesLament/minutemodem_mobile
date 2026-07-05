@@ -17,6 +17,13 @@ import android.net.Uri
 import android.opengl.GLES30
 import android.opengl.GLSurfaceView
 import android.os.SystemClock
+import android.location.GnssStatus
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.app.ActivityCompat
@@ -233,6 +240,11 @@ object MobBridge {
 
     private var activityRef: WeakReference<Activity>? = null
 
+    /** Current Activity, for sibling helpers (e.g. HamlibUsbSerial) that need a
+     *  Context for USB access. */
+    @JvmStatic
+    fun currentActivity(): Activity? = activityRef?.get()
+
     /** Called from mob_nif.c via JNI — initialise anything activity-scoped. */
     @JvmStatic
     fun init(activity: Activity) {
@@ -423,6 +435,7 @@ object MobBridge {
         }
         if (perms.all { ContextCompat.checkSelfPermission(activity, it) == PackageManager.PERMISSION_GRANTED }) {
             nativeDeliverAtom3(pid, "permission", cap, "granted")
+            if (cap == "location") startGnss(pid)
         } else {
             ActivityCompat.requestPermissions(activity, perms, PERM_REQUEST_CODE)
         }
@@ -431,6 +444,146 @@ object MobBridge {
     @JvmStatic
     fun onPermissionResult(granted: Boolean) {
         nativeDeliverAtom3(pendingPermissionPid, "permission", pendingPermissionCap, if (granted) "granted" else "denied")
+        if (granted && pendingPermissionCap == "location") startGnss(pendingPermissionPid)
+    }
+
+    // ── GNSS / Location time source ────────────────────────────────────────
+    // Feeds the disciplined virtual clock (Minutewave.Clock). We use the
+    // LocationManager GPS provider: each fix carries a UTC time (loc.time, GPS-
+    // derived) and the monotonic instant it was captured (elapsedRealtimeNanos).
+    // We deliver {utc_ms, age_ms, unc_ms} to the Elixir consumer, which places
+    // the fix in the BEAM monotonic timeline (mono_now - age) and disciplines.
+    var gnssPid: Long = 0
+
+    // Duty-cycle: each acquisition is a short burst. Elixir decides WHEN to
+    // acquire (policy); Kotlin only powers the chip down at the end of a burst
+    // (mechanism) — after a settle window past the first fix, or a hard cap if
+    // no fix is seen (cold sky). Keeps continuous GPS off in normal operation.
+    private val gnssHandler = Handler(Looper.getMainLooper())
+    private var gnssStopRunnable: Runnable? = null
+    private var gnssBurstHasFix = false
+    private val GNSS_SETTLE_MS = 6_000L
+    private val GNSS_MAX_BURST_MS = 90_000L
+
+    private fun scheduleGnssStop(delayMs: Long) {
+        gnssStopRunnable?.let { gnssHandler.removeCallbacks(it) }
+        val r = Runnable { stopGnss() }
+        gnssStopRunnable = r
+        gnssHandler.postDelayed(r, delayMs)
+    }
+
+    private val gnssListener = object : LocationListener {
+        override fun onLocationChanged(loc: Location) {
+            val pid = gnssPid
+            if (pid == 0L) return
+            val utcMs = loc.time
+            val ageMs = (SystemClock.elapsedRealtimeNanos() - loc.elapsedRealtimeNanos) / 1_000_000L
+            // GPS UTC is good to a few tens of ms; delivery latency is already
+            // captured exactly in ageMs. 50ms is a safe fixed bound (< the clock
+            // guard of 250ms), so a fresh fix reports :locked.
+            val uncMs = 50L
+            val json = "{\"utc_ms\":$utcMs,\"age_ms\":$ageMs,\"unc_ms\":$uncMs,\"provider\":\"${loc.provider}\"}"
+            nativeDeliverFileResult(pid, "gnss", "fix", json)
+            // First fix of the burst: let it settle briefly (a few more fixes
+            // for C/N0), then power the chip down.
+            if (!gnssBurstHasFix) {
+                gnssBurstHasFix = true
+                scheduleGnssStop(GNSS_SETTLE_MS)
+            }
+        }
+
+        override fun onProviderDisabled(provider: String) {
+            if (gnssPid != 0L) nativeDeliverAtom3(gnssPid, "gnss", "provider", "disabled")
+        }
+
+        override fun onProviderEnabled(provider: String) {
+            if (gnssPid != 0L) nativeDeliverAtom3(gnssPid, "gnss", "provider", "enabled")
+        }
+
+        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+    }
+
+    // Per-satellite constellation telemetry (Tier 2): satellite counts, the
+    // strongest C/N0, which constellations are contributing to the fix, and
+    // time-to-first-fix. Delivered as {:mob_file_result, "gnss", "status"/"ttff"}.
+    private val gnssStatusCallback = object : GnssStatus.Callback() {
+        override fun onSatelliteStatusChanged(status: GnssStatus) {
+            val pid = gnssPid
+            if (pid == 0L) return
+            val n = status.satelliteCount
+            var used = 0
+            var maxCn0 = 0.0f
+            val consts = HashSet<Int>()
+            for (i in 0 until n) {
+                val cn0 = status.getCn0DbHz(i)
+                if (cn0 > maxCn0) maxCn0 = cn0
+                if (status.usedInFix(i)) {
+                    used++
+                    consts.add(status.getConstellationType(i))
+                }
+            }
+            val constNames = consts.map { constellationName(it) }.sorted().joinToString("+")
+            val json = "{\"visible\":$n,\"used\":$used,\"max_cn0\":${maxCn0.toInt()},\"constellations\":\"$constNames\"}"
+            nativeDeliverFileResult(pid, "gnss", "status", json)
+        }
+
+        override fun onFirstFix(ttffMillis: Int) {
+            if (gnssPid != 0L) nativeDeliverFileResult(gnssPid, "gnss", "ttff", "{\"ttff_ms\":$ttffMillis}")
+        }
+    }
+
+    private fun constellationName(type: Int): String = when (type) {
+        GnssStatus.CONSTELLATION_GPS     -> "GPS"
+        GnssStatus.CONSTELLATION_GLONASS -> "GLO"
+        GnssStatus.CONSTELLATION_GALILEO -> "GAL"
+        GnssStatus.CONSTELLATION_BEIDOU  -> "BDS"
+        GnssStatus.CONSTELLATION_QZSS    -> "QZS"
+        GnssStatus.CONSTELLATION_SBAS    -> "SBAS"
+        GnssStatus.CONSTELLATION_IRNSS   -> "NAV"
+        else                             -> "?"
+    }
+
+    @JvmStatic
+    fun startGnss(pid: Long) {
+        val activity = activityRef?.get() ?: return
+        if (ContextCompat.checkSelfPermission(activity, android.Manifest.permission.ACCESS_FINE_LOCATION)
+            != PackageManager.PERMISSION_GRANTED) return
+        gnssPid = pid
+        val lm = activity.getSystemService(LocationManager::class.java) ?: return
+        activity.runOnUiThread {
+            try {
+                lm.removeUpdates(gnssListener)
+                lm.requestLocationUpdates(
+                    LocationManager.GPS_PROVIDER, 1000L, 0f, gnssListener, Looper.getMainLooper()
+                )
+                try { lm.unregisterGnssStatusCallback(gnssStatusCallback) } catch (_: Exception) {}
+                lm.registerGnssStatusCallback(gnssStatusCallback, Handler(Looper.getMainLooper()))
+                gnssBurstHasFix = false
+                scheduleGnssStop(GNSS_MAX_BURST_MS)
+                Log.i("MobBridge", "GNSS burst started -> pid $pid")
+            } catch (e: Exception) {
+                Log.w("MobBridge", "GNSS start failed: $e")
+            }
+        }
+    }
+
+    @JvmStatic
+    fun stopGnss() {
+        gnssStopRunnable?.let { gnssHandler.removeCallbacks(it) }
+        gnssStopRunnable = null
+        val pid = gnssPid
+        val activity = activityRef?.get()
+        val lm = activity?.getSystemService(LocationManager::class.java)
+        if (activity != null && lm != null) {
+            activity.runOnUiThread {
+                try { lm.removeUpdates(gnssListener) } catch (_: Exception) {}
+                try { lm.unregisterGnssStatusCallback(gnssStatusCallback) } catch (_: Exception) {}
+            }
+        }
+        // Tell the Elixir policy the burst ended so it can schedule the next one.
+        if (pid != 0L) nativeDeliverAtom3(pid, "gnss", "burst", "ended")
+        gnssPid = 0
+        Log.i("MobBridge", "GNSS burst stopped")
     }
 
     // ── Biometric ─────────────────────────────────────────────────────────

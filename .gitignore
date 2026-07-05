@@ -49,3 +49,6 @@ android/app/src/main/jniLibs/
 
 # Working-copy backups
 *.bak
+
+# debug screenshots
+.rig_dbg.png

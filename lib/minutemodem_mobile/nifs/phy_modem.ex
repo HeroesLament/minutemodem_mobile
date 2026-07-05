@@ -57,6 +57,27 @@ defmodule MinutemodemMobile.Nifs.PhyModem do
     do: :erlang.nif_error(:nif_not_loaded)
 
   # ──────────────────────────────────────────────────────────────────────
+  # Zero-copy binary seam (s16le PCM in/out)
+  #
+  # Realtime audio path variants: PCM crosses the NIF boundary as an Erlang
+  # binary, not a list of integers, to avoid one boxed term per sample
+  # (~48k/sec/direction) of allocator + GC load. Symbols stay lists (small,
+  # baud-rate cardinality).
+  # ──────────────────────────────────────────────────────────────────────
+
+  def unified_demod_symbols_bin(_demodulator, _samples_bin),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def unified_demod_iq_bin(_demodulator, _samples_bin),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def unified_mod_modulate_bin(_modulator, _symbols),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def unified_mod_flush_bin(_modulator),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  # ──────────────────────────────────────────────────────────────────────
   # DFE (Decision Feedback Equalizer)
   # ──────────────────────────────────────────────────────────────────────
 

@@ -27,7 +27,7 @@
 //! - `rustler::init!("Elixir.Module.Name")` — no function list, no
 //!   load_data, no resource list. All discovery is compile-time.
 
-use rustler::{Atom, NifResult, Resource, ResourceArc};
+use rustler::{Atom, Binary, Env, NifResult, OwnedBinary, Resource, ResourceArc};
 use std::sync::Mutex;
 
 use milwave_rs::unified::{
@@ -299,6 +299,121 @@ pub fn unified_demod_reset(demodulator: ResourceArc<UnifiedDemodulatorResource>)
         state.reset();
     }
     ok()
+}
+
+// ============================================================================
+// Zero-copy binary-seam NIFs
+// ============================================================================
+//
+// The realtime audio path carries raw s16le PCM (DigiRig CM108 @ 48 kHz). The
+// list-based variants above decode/encode one boxed BEAM integer per sample,
+// which at 48k samples/sec/direction is unacceptable allocator + GC pressure.
+// These variants move the same data as Erlang binaries: input is copied once
+// into a contiguous Vec<i16> (milwave wants &[i16]); output is written straight
+// into an OwnedBinary. No per-sample BEAM terms.
+
+/// Decode an s16le PCM binary into a Vec<i16>.
+///
+/// Uses `chunks_exact(2)` + `i16::from_le_bytes` rather than a transmute: BEAM
+/// binary payloads are not guaranteed 2-byte aligned, and the waveform is
+/// little-endian by contract (Android arm64 is LE; this stays correct
+/// regardless of host endianness). A trailing odd byte (malformed frame) is
+/// dropped rather than panicking.
+#[inline]
+fn s16le_to_vec(bin: &[u8]) -> Vec<i16> {
+    bin.chunks_exact(2)
+        .map(|c| i16::from_le_bytes([c[0], c[1]]))
+        .collect()
+}
+
+/// Encode an i16 slice into a freshly allocated s16le OwnedBinary.
+#[inline]
+fn vec_to_s16le<'a>(env: Env<'a>, samples: &[i16]) -> NifResult<Binary<'a>> {
+    let mut out = OwnedBinary::new(samples.len() * 2)
+        .ok_or_else(|| rustler::Error::Term(Box::new("alloc failed")))?;
+    {
+        let buf = out.as_mut_slice();
+        for (i, &s) in samples.iter().enumerate() {
+            let b = s.to_le_bytes();
+            buf[2 * i] = b[0];
+            buf[2 * i + 1] = b[1];
+        }
+    }
+    Ok(out.release(env))
+}
+
+/// Demodulate an s16le PCM binary to hard symbol decisions (RX hot path).
+///
+/// Zero-copy-in analog of `unified_demod_symbols`. Symbols out stay a small
+/// `Vec<u8>` (one byte per symbol, ~baud-rate cardinality, not sample-rate).
+#[rustler::nif]
+pub fn unified_demod_symbols_bin(
+    demodulator: ResourceArc<UnifiedDemodulatorResource>,
+    samples: Binary,
+) -> NifResult<Vec<u8>> {
+    let pcm = s16le_to_vec(samples.as_slice());
+    let mut state = demodulator
+        .inner
+        .lock()
+        .map_err(|_| rustler::Error::Term(Box::new("lock poisoned")))?;
+    Ok(state.demodulate(&pcm))
+}
+
+/// Demodulate an s16le PCM binary to per-symbol baseband I/Q (RX hot path).
+///
+/// Zero-copy-in analog of `unified_demod_iq`. This is the variant the 188-110D
+/// receiver uses: PCM in, soft I/Q out (fed to the PHY sync/WID/Walsh path).
+/// The I/Q output is symbol-rate cardinality (~2400/sec), so it stays a list;
+/// the 48 kHz-cardinality data is the *input*, which is the binary here.
+#[rustler::nif]
+pub fn unified_demod_iq_bin(
+    demodulator: ResourceArc<UnifiedDemodulatorResource>,
+    samples: Binary,
+) -> NifResult<Vec<(f64, f64)>> {
+    let pcm = s16le_to_vec(samples.as_slice());
+    let mut state = demodulator
+        .inner
+        .lock()
+        .map_err(|_| rustler::Error::Term(Box::new("lock poisoned")))?;
+    Ok(state.demodulate_iq(&pcm))
+}
+
+/// Modulate a frame of symbols, returning s16le PCM as a binary (TX hot path).
+///
+/// Binary-out analog of `unified_mod_modulate`. Symbols in stay a small
+/// `Vec<u8>`; the large sample buffer comes back as one OwnedBinary.
+#[rustler::nif]
+pub fn unified_mod_modulate_bin<'a>(
+    env: Env<'a>,
+    modulator: ResourceArc<UnifiedModulatorResource>,
+    symbols: Vec<u8>,
+) -> NifResult<Binary<'a>> {
+    let samples = {
+        let mut state = modulator
+            .inner
+            .lock()
+            .map_err(|_| rustler::Error::Term(Box::new("lock poisoned")))?;
+        state.modulate(&symbols)
+    };
+    vec_to_s16le(env, &samples)
+}
+
+/// Flush the RRC filter tail, returning s16le PCM as a binary.
+///
+/// Binary-out analog of `unified_mod_flush`.
+#[rustler::nif]
+pub fn unified_mod_flush_bin<'a>(
+    env: Env<'a>,
+    modulator: ResourceArc<UnifiedModulatorResource>,
+) -> NifResult<Binary<'a>> {
+    let samples = {
+        let mut state = modulator
+            .inner
+            .lock()
+            .map_err(|_| rustler::Error::Term(Box::new("lock poisoned")))?;
+        state.flush()
+    };
+    vec_to_s16le(env, &samples)
 }
 
 // ============================================================================

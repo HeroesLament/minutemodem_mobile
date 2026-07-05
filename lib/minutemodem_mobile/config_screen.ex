@@ -73,6 +73,12 @@ defmodule MinutemodemMobile.ConfigScreen do
           {network_list(assigns.networks, assigns.active_name)}
           <Spacer size={6} />
           <Text text="TAP TO ACTIVATE — ONE NETWORK AT A TIME" text_size={:sm} text_color={:muted} padding={4} />
+          <Spacer size={10} />
+          <Row fill_width={true}>
+            {io_button("IMPORT JSON", {:net_import}, @green)}
+            <Spacer size={8} />
+            {io_button("EXPORT ACTIVE", {:net_export}, @amber)}
+          </Row>
 
           <Spacer size={20} />
           <Divider color={:border} />
@@ -88,7 +94,7 @@ defmodule MinutemodemMobile.ConfigScreen do
             </Row>
           </Box>
           <Spacer size={6} />
-          <Text text="DIGIRIG NOT DETECTED — LOOPBACK ACTIVE" text_size={:sm} text_color={0xFFB5862A} padding={4} />
+          {digirig_line(assigns.digirig_status)}
 
           {status_line(assigns.status)}
         </Column>
@@ -100,6 +106,16 @@ defmodule MinutemodemMobile.ConfigScreen do
   defp new_button do
     ~MOB"""
     <Button text="+ NEW" background={:surface} text_color={:on_surface} text_size={:sm} padding={:space_sm} on_tap={{self(), :new_network}} />
+    """
+  end
+
+  # Import/export a network as JSON. Import opens the OS document picker;
+  # export shares the active network's JSON via the OS share sheet.
+  defp io_button(label, tag, color) do
+    ~MOB"""
+    <Box background={@inset} border_color={color} border_width={1} corner_radius={0} padding={:space_md} fill_width={true} weight={1} on_tap={{self(), tag}}>
+      <Text text={label} text_size={:sm} text_color={color} />
+    </Box>
     """
   end
 
@@ -159,6 +175,40 @@ defmodule MinutemodemMobile.ConfigScreen do
   end
 
   # -- Helpers --------------------------------------------------------------
+
+  # DigiRig session status line, driven by the modem Manager's status atom.
+  # The modem is idle until a session is deliberately started, so :idle is
+  # "no session" rather than "no hardware".
+  defp digirig_line(:ready) do
+    ~MOB"""
+    <Text text="DIGIRIG SESSION ACTIVE" text_size={:sm} text_color={@green} padding={4} />
+    """
+  end
+
+  defp digirig_line(:tx) do
+    ~MOB"""
+    <Text text="DIGIRIG — TRANSMITTING" text_size={:sm} text_color={@green} padding={4} />
+    """
+  end
+
+  defp digirig_line(:opening) do
+    ~MOB"""
+    <Text text="DIGIRIG — CONNECTING…" text_size={:sm} text_color={@amber} padding={4} />
+    """
+  end
+
+  defp digirig_line(:unavailable) do
+    ~MOB"""
+    <Text text="MODEM UNAVAILABLE" text_size={:sm} text_color={0xFFB5862A} padding={4} />
+    """
+  end
+
+  # :idle (or anything else): resident but no hardware session started.
+  defp digirig_line(_) do
+    ~MOB"""
+    <Text text="NO SESSION — START MODEM TO CONNECT DIGIRIG" text_size={:sm} text_color={0xFFB5862A} padding={4} />
+    """
+  end
 
   defp type_label("ale"), do: "ALE NETWORK"
   defp type_label("data"), do: "DATA NETWORK"
