@@ -10,6 +10,15 @@ def localProps = new Properties()
 def localPropsFile = rootProject.file('local.properties')
 if (localPropsFile.exists()) localProps.load(localPropsFile.newDataInputStream())
 
+// ── Release signing ───────────────────────────────────────────────────────────
+// Loaded from android/keystore.properties (git-ignored). When present, release
+// builds are signed with the upload key; when absent, release stays unsigned so
+// contributors without the key can still build debug.
+def keystoreProps = new Properties()
+def keystorePropsFile = rootProject.file('keystore.properties')
+def hasReleaseSigning = keystorePropsFile.exists()
+if (hasReleaseSigning) keystoreProps.load(keystorePropsFile.newDataInputStream())
+
 def mobOtpRelease     = localProps.getProperty('mob.otp_release',      System.getenv('MOB_ANDROID_OTP_RELEASE')      ?: '')
 def mobOtpReleaseArm32 = localProps.getProperty('mob.otp_release_arm32', System.getenv('MOB_ANDROID_OTP_RELEASE_ARM32') ?: mobOtpRelease)
 def mobDir             = localProps.getProperty('mob.mob_dir',           System.getenv('MOB_DIR')                       ?: '')
@@ -74,8 +83,22 @@ android {
         jvmTarget = '1.8'
     }
 
+    signingConfigs {
+        release {
+            if (hasReleaseSigning) {
+                storeFile file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
+
     buildTypes {
-        release { minifyEnabled false }
+        release {
+            minifyEnabled false
+            if (hasReleaseSigning) signingConfig signingConfigs.release
+        }
         debug   { jniDebuggable true }
     }
 }

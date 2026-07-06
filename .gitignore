@@ -52,3 +52,11 @@ android/app/src/main/jniLibs/
 
 # debug screenshots
 .rig_dbg.png
+
+# Release signing — keep keys OUT of VCS
+android/keystore.properties
+android/*.jks
+android/*.keystore
+
+# Bundled OTP runtime (build artifact, staged by mix mob.release)
+android/app/src/main/assets/otp.zip
