@@ -21,7 +21,13 @@ step(N, Fun) ->
     %% classes (throw / exit / error) and tags them so the log
     %% formatter prints something readable.
     Result = try Fun()
-             catch Class:Reason -> {Class, Reason}
+             catch Class:Reason:Stack ->
+                 %% Log the full stacktrace so the exact undefined M:F/A
+                 %% (top frame of an `undef` error) is visible in logcat.
+                 mob_nif:log("step " ++ integer_to_list(N) ++ " STACK => " ++
+                             lists:flatten(io_lib:format("~p:~p~n~p",
+                                                         [Class, Reason, Stack]))),
+                 {Class, Reason}
              end,
     mob_nif:log("step " ++ integer_to_list(N) ++ " => " ++
                 lists:flatten(io_lib:format("~p", [Result]))).

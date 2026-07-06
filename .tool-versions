@@ -5,7 +5,14 @@
 #   asdf install    https://asdf-vm.com
 #
 # OTP 29 matches the device runtime tarballs. Java 17 LTS is required for Gradle.
+#
+# Elixir MUST match the version baked into Mob's Android OTP runtime bundle
+# (Mob 0.7.5 ships Elixir 1.19.5). Building the release with a newer host Elixir
+# skews the codegen: e.g. Elixir 1.20 expands the `in` operator to Enum.__in__/2,
+# which the 1.19.5 device runtime doesn't export — Ecto.Migrator then crashes on
+# boot with {error, undef}, the UI never mounts, and the app shows a black screen.
+# Debug deploys hide it (same host Elixir compiles AND runs). Keep this at 1.19.x.
 erlang 29.0
-elixir 1.20.0-rc.5-otp-29
+elixir 1.19.5-otp-28
 java temurin-17.0.18
 zig 0.16.0
