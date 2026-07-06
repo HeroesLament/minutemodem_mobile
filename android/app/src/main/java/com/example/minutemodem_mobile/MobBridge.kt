@@ -88,6 +88,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.draw.clip
@@ -2210,6 +2213,7 @@ private fun RenderNodeInner(node: MobNode, modifier: Modifier) {
         "button"     -> MobButton(node, m)
         "tab_bar"    -> MobTabBar(node, m)
         "drawer"     -> MobDrawer(node, m)
+        "dialog"     -> MobDialog(node, m)
         "text_field" -> MobTextField(node, m)
         "toggle"     -> MobToggle(node, m)
         "slider"     -> MobSlider(node, m)
@@ -2225,6 +2229,32 @@ private fun RenderNodeInner(node: MobNode, modifier: Modifier) {
         "native_view"    -> MobNativeViewRegistry.render(node)
         "canvas"         -> MobCanvas(node, m)
         "gpu_view"       -> MobGpuView(node, m)
+    }
+}
+
+// A centered modal overlay. Renders its children in a scrollable, bordered
+// container floating above the current screen with a dimmed scrim. `on_tap`
+// (reusing the standard tap plumbing) is the dismiss handler — fired on scrim
+// tap or the back button. Background / border / padding come from the node's
+// props via the passed-in nodeModifier. The Elixir side composes <Dialog> only
+// while it should be visible; when the node is absent the overlay is gone.
+@Composable
+private fun MobDialog(node: MobNode, modifier: Modifier) {
+    val dismissHandle = intProp(node.props, "on_tap")
+
+    Dialog(
+        onDismissRequest = { dismissHandle?.let { MobBridge.nativeSendTap(it) } },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .heightIn(max = 560.dp)
+                .then(modifier)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            node.children.forEach { RenderNode(it) }
+        }
     }
 }
 

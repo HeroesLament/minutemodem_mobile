@@ -410,15 +410,69 @@ defmodule MinutemodemMobile.LinkingScreen do
   defp aux_controls(assigns) do
     ~MOB"""
     <Column fill_width={true}>
+      {sound_control(assigns)}
+      <Spacer size={10} />
+      {terminate_button(assigns)}
+    </Column>
+    """
+  end
+
+  # SOUND opens a native modal (MobDialog) to pick ALL channels or one. Tapping
+  # the scrim / back button fires on_tap → {:sound_cancel}. The buttons render
+  # behind the dimmed scrim.
+  defp sound_control(%{sound_picker: true} = assigns) do
+    rows = Enum.map(assigns[:sound_channels] || [], &sound_channel_row/1)
+
+    ~MOB"""
+    <Column fill_width={true}>
       <Row fill_width={true}>
         {button("SOUND", {:ale_sound}, @amber, @panel)}
         <Spacer size={10} />
         {button("LQA EXCH", {:ale_lqa}, @amber, @panel)}
       </Row>
-      <Spacer size={10} />
-      {terminate_button(assigns)}
+      <Dialog background={@inset} border_color={@amber} border_width={1} corner_radius={0} padding={16} on_tap={{self(), {:sound_cancel}}}>
+        <Row fill_width={true}>
+          <Text text="SOUND — PICK CHANNEL" text_size={:md} text_color={@amber} />
+          <Spacer weight={1} />
+          <Box background={@panel} border_color={@bezel} border_width={1} corner_radius={0} width={92} padding={10} on_tap={{self(), {:sound_cancel}}}>
+            <Text text="CLOSE" text_size={:sm} text_color={@amber} />
+          </Box>
+        </Row>
+        <Spacer size={12} />
+        {button("ALL CHANNELS", {:sound_pick_all}, @green, @panel)}
+        <Spacer size={8} />
+        {rows}
+      </Dialog>
     </Column>
     """
+  end
+
+  defp sound_control(_assigns) do
+    ~MOB"""
+    <Row fill_width={true}>
+      {button("SOUND", {:ale_sound}, @amber, @panel)}
+      <Spacer size={10} />
+      {button("LQA EXCH", {:ale_lqa}, @amber, @panel)}
+    </Row>
+    """
+  end
+
+  defp sound_channel_row(ch) do
+    ~MOB"""
+    <Column fill_width={true}>
+      <Box background={@panel} border_color={@bezel} border_width={1} corner_radius={0} padding={:space_md} fill_width={true} on_tap={{self(), {:sound_pick_one, ch.freq_hz}}}>
+        <Text text={sound_row_label(ch)} text_size={:md} text_color={@amber} />
+      </Box>
+      <Spacer size={6} />
+    </Column>
+    """
+  end
+
+  defp sound_row_label(ch) do
+    case String.trim(to_string(ch.name)) do
+      "" -> format_freq(ch.freq_hz)
+      name -> name <> "   ·   " <> format_freq(ch.freq_hz)
+    end
   end
 
   defp terminate_button(%{ale_state: :linked}) do

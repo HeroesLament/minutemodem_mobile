@@ -69,7 +69,9 @@ defmodule MinutemodemMobile.ShellScreen do
         rig_subtab: "status",
         rig_cfg: rig_cfg_draft(),
         rig_models: [],
-        model_query: ""
+        model_query: "",
+        sound_picker: false,
+        sound_channels: []
       )
 
     # Drive the clock display at ~1 Hz (only re-reads while the TIME tab is up).
@@ -639,14 +641,59 @@ defmodule MinutemodemMobile.ShellScreen do
     end
   end
 
+  # SOUND opens an inline picker (Mob has no modal): sound ALL channels or one.
   def handle_info({:tap, {:ale_sound}}, socket) do
+    case socket.assigns.net do
+      nil ->
+        {:noreply, Mob.Socket.assign(socket, status: "NO ACTIVE NETWORK")}
+
+      net ->
+        chans = sound_channel_maps(net)
+
+        if chans == [] do
+          {:noreply, Mob.Socket.assign(socket, status: "NO CHANNELS TO SOUND")}
+        else
+          {:noreply, Mob.Socket.assign(socket, sound_picker: true, sound_channels: chans)}
+        end
+    end
+  end
+
+  def handle_info({:tap, {:sound_cancel}}, socket) do
+    {:noreply, Mob.Socket.assign(socket, sound_picker: false)}
+  end
+
+  def handle_info({:tap, {:sound_pick_all}}, socket) do
+    do_sound(socket, socket.assigns[:sound_channels] || [], "SOUNDING ALL CHANNELS")
+  end
+
+  def handle_info({:tap, {:sound_pick_one, freq}}, socket) do
+    ch = Enum.find(socket.assigns[:sound_channels] || [], &(&1.freq_hz == freq))
+    do_sound(socket, List.wrap(ch), "SOUNDING #{format_mhz(freq)}")
+  end
+
+  # Build the list of channel maps to offer / sound, from the active net's set.
+  defp sound_channel_maps(net) do
+    net.id
+    |> Channels.scan_set()
+    |> Enum.map(fn c -> %{freq_hz: c.freq_hz, name: c.name || "", mode: chan_mode_atom(c.mode)} end)
+  end
+
+  defp do_sound(socket, [], _status),
+    do: {:noreply, Mob.Socket.assign(socket, sound_picker: false, status: "NO CHANNELS")}
+
+  defp do_sound(socket, chans, status) do
+    socket = Mob.Socket.assign(socket, sound_picker: false)
+
     with {:ok, socket} <- ensure_ale_started(socket) do
-      _ = safe_link(fn -> Link.sound(socket.assigns.rig_id, []) end)
-      {:noreply, Mob.Socket.assign(socket, status: "SOUNDING")}
+      _ = safe_link(fn -> Link.sound(socket.assigns.rig_id, channels: chans) end)
+      {:noreply, Mob.Socket.assign(socket, status: status)}
     else
       {:error, socket} -> {:noreply, socket}
     end
   end
+
+  defp format_mhz(hz) when is_integer(hz), do: "#{Float.round(hz / 1_000_000, 3)} MHz"
+  defp format_mhz(_), do: "—"
 
   def handle_info({:tap, {:ale_terminate}}, socket) do
     _ = safe_link(fn -> Link.terminate_link(socket.assigns.rig_id, :normal) end)
