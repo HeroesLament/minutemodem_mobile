@@ -60,3 +60,7 @@ android/*.keystore
 
 # Bundled OTP runtime (build artifact, staged by mix mob.release)
 android/app/src/main/assets/otp.zip
+
+# Design-workbench delivery (raw drop; extracted assets live in branding/ + res/)
+/Exploring design possibilities.zip
+/_design_staging/
