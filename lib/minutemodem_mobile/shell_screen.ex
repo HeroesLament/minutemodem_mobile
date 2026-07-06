@@ -71,7 +71,8 @@ defmodule MinutemodemMobile.ShellScreen do
         rig_models: [],
         model_query: "",
         sound_picker: false,
-        sound_channels: []
+        sound_channels: [],
+        net_dialog: nil
       )
 
     # Drive the clock display at ~1 Hz (only re-reads while the TIME tab is up).
@@ -304,16 +305,107 @@ defmodule MinutemodemMobile.ShellScreen do
     {:noreply, Mob.Socket.assign(socket, status: "IMPORT CANCELLED")}
   end
 
+  # + NEW opens the name-prompt dialog (pre-filled with the next default name)
+  # rather than creating immediately, so the operator names it at creation.
   def handle_info({:tap, :new_network}, socket) do
-    name = Networks.next_default_name()
+    dialog = %{mode: :new, draft: Networks.next_default_name()}
+    {:noreply, Mob.Socket.assign(socket, net_dialog: dialog, status: nil)}
+  end
 
-    case Networks.create(%{name: name, type: "ale"}) do
-      {:ok, _} ->
-        {:noreply, load(socket, status: "CREATED " <> name)}
+  # -- Network management dialog (Config tab) -------------------------------
 
-      {:error, _cs} ->
-        {:noreply, Mob.Socket.assign(socket, status: "CREATE FAILED")}
+  # Controlled TextField drafts for the new / manage dialogs.
+  def handle_info({:change, :net_new_changed, value}, socket) do
+    {:noreply, put_dialog_draft(socket, value)}
+  end
+
+  def handle_info({:change, :net_name_changed, value}, socket) do
+    {:noreply, put_dialog_draft(socket, value)}
+  end
+
+  # Create the network with the entered name.
+  def handle_info({:tap, {:net_new_create}}, socket) do
+    name = socket |> dialog_draft() |> String.trim()
+
+    cond do
+      name == "" ->
+        {:noreply, Mob.Socket.assign(socket, status: "NAME REQUIRED")}
+
+      true ->
+        case Networks.create(%{name: name, type: "ale"}) do
+          {:ok, _} -> {:noreply, load(socket, status: "CREATED " <> name, net_dialog: nil)}
+          {:error, _cs} -> {:noreply, Mob.Socket.assign(socket, status: "NAME TAKEN OR INVALID")}
+        end
     end
+  end
+
+  # Open the manage dialog for a network.
+  def handle_info({:tap, {:net_manage, id}}, socket) do
+    case Networks.get(id) do
+      nil ->
+        {:noreply, socket}
+
+      net ->
+        dialog = %{mode: :manage, id: id, draft: net.name, armed: false}
+        {:noreply, Mob.Socket.assign(socket, net_dialog: dialog, status: nil)}
+    end
+  end
+
+  # Rename the managed network to the drafted name.
+  def handle_info({:tap, {:net_rename_save}}, socket) do
+    with %{mode: :manage, id: id, draft: draft} <- socket.assigns.net_dialog,
+         %{} = net <- Networks.get(id) do
+      name = String.trim(draft)
+
+      cond do
+        name == "" ->
+          {:noreply, Mob.Socket.assign(socket, status: "NAME REQUIRED")}
+
+        name == net.name ->
+          {:noreply, Mob.Socket.assign(socket, net_dialog: nil, status: nil)}
+
+        true ->
+          case Networks.rename(net, name) do
+            {:ok, _} -> {:noreply, load(socket, status: "RENAMED " <> name, net_dialog: nil)}
+            {:error, _cs} -> {:noreply, Mob.Socket.assign(socket, status: "NAME TAKEN OR INVALID")}
+          end
+      end
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  # Activate the managed network (reuses the activate transaction).
+  def handle_info({:tap, {:net_manage_activate}}, socket) do
+    with %{mode: :manage, id: id} <- socket.assigns.net_dialog,
+         {:ok, net} <- Networks.activate(id) do
+      {:noreply, load(socket, status: "ACTIVATED " <> net.name, net_dialog: nil)}
+    else
+      _ -> {:noreply, Mob.Socket.assign(socket, status: "ACTIVATE FAILED")}
+    end
+  end
+
+  # Two-step delete: arm shows the confirm; keep disarms; confirm deletes.
+  def handle_info({:tap, {:net_delete_arm}}, socket) do
+    {:noreply, update_dialog(socket, &Map.put(&1, :armed, true))}
+  end
+
+  def handle_info({:tap, {:net_delete_cancel}}, socket) do
+    {:noreply, update_dialog(socket, &Map.put(&1, :armed, false))}
+  end
+
+  def handle_info({:tap, {:net_delete_confirm}}, socket) do
+    with %{mode: :manage, id: id} <- socket.assigns.net_dialog,
+         %{} = net <- Networks.get(id),
+         {:ok, _} <- Networks.delete(net) do
+      {:noreply, load(socket, status: "DELETED " <> net.name, net_dialog: nil)}
+    else
+      _ -> {:noreply, Mob.Socket.assign(socket, status: "DELETE FAILED")}
+    end
+  end
+
+  def handle_info({:tap, {:net_dialog_close}}, socket) do
+    {:noreply, Mob.Socket.assign(socket, net_dialog: nil)}
   end
 
   # -- Network tab events ---------------------------------------------------
@@ -1194,6 +1286,26 @@ defmodule MinutemodemMobile.ShellScreen do
     _ -> nil
   catch
     :exit, _ -> nil
+  end
+
+  # -- Network dialog draft helpers -----------------------------------------
+
+  # Current text draft held in the open network dialog (new or manage).
+  defp dialog_draft(socket) do
+    (socket.assigns[:net_dialog] || %{}) |> Map.get(:draft, "")
+  end
+
+  # Set the draft text on the open dialog (no-op if none is open).
+  defp put_dialog_draft(socket, value) do
+    update_dialog(socket, &Map.put(&1, :draft, value))
+  end
+
+  # Apply `fun` to the open dialog map and re-assign; no-op if none is open.
+  defp update_dialog(socket, fun) do
+    case socket.assigns[:net_dialog] do
+      nil -> socket
+      dialog -> Mob.Socket.assign(socket, net_dialog: fun.(dialog))
+    end
   end
 
   # Map NetworkIO.import_json/1 error reasons to a short status-line message.

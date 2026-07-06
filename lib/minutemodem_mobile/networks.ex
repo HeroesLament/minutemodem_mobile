@@ -64,6 +64,32 @@ defmodule MinutemodemMobile.Networks do
     |> Repo.update()
   end
 
+  @doc """
+  Rename a network. Names are unique across networks, so a collision returns
+  `{:error, changeset}` (constraint `:name`). Returns `{:ok, network}` on
+  success. The `type` and other fields are untouched.
+  """
+  def rename(%Network{} = net, new_name) do
+    net
+    |> Network.changeset(%{name: new_name})
+    |> Repo.update()
+  end
+
+  @doc """
+  Delete a network. Its dependent rows (members, channels, LQA soundings)
+  cascade via `on_delete: :delete_all`. If it was the active network, no
+  network is left active afterward — the caller re-activates another.
+  Returns `{:ok, network}` or `{:error, changeset}`.
+  """
+  def delete(%Network{} = net), do: Repo.delete(net)
+
+  def delete(id) when is_binary(id) do
+    case get(id) do
+      nil -> {:error, :not_found}
+      net -> delete(net)
+    end
+  end
+
   @doc "Fetch a network by id, or nil."
   def get(id), do: Repo.get(Network, id)
 
