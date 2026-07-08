@@ -34,6 +34,8 @@ defmodule MinutemodemMobile.ShellScreen do
     LinkQuality,
     NetworkTimeScreen,
     LinkProtectionScreen,
+    Chat,
+    AleChatScreen,
     Gnss
   }
 
@@ -72,7 +74,10 @@ defmodule MinutemodemMobile.ShellScreen do
         model_query: "",
         sound_picker: false,
         sound_channels: [],
-        net_dialog: nil
+        net_dialog: nil,
+        chat_peer: nil,
+        chat_thread: [],
+        chat_draft: ""
       )
 
     # Drive the clock display at ~1 Hz (only re-reads while the TIME tab is up).
@@ -197,6 +202,7 @@ defmodule MinutemodemMobile.ShellScreen do
         %{id: "network", label: "NETWORK", icon: "list"},
         %{id: "rig", label: "RIG", icon: "radio"},
         %{id: "linking", label: "LINKING", icon: "link"},
+        %{id: "chat", label: "ALE CHAT", icon: "chat"},
         %{id: "protection", label: "Link Protection", icon: "lock"},
         %{id: "contacts", label: "CONTACTS", icon: "person"},
         %{id: "quality", label: "QUALITY", icon: "insights"},
@@ -208,6 +214,7 @@ defmodule MinutemodemMobile.ShellScreen do
       {tab_body("network", assigns, &NetworkScreen.render/1)}
       {tab_body("rig", assigns, &RigScreen.render/1)}
       {tab_body("linking", assigns, &LinkingScreen.render/1)}
+      {tab_body("chat", assigns, &AleChatScreen.render/1)}
       {tab_body("protection", assigns, &LinkProtectionScreen.render/1)}
       {tab_body("contacts", assigns, &ContactsScreen.render/1)}
       {tab_body("quality", assigns, &LinkQualityScreen.render/1)}
@@ -1012,13 +1019,8 @@ defmodule MinutemodemMobile.ShellScreen do
 
     cond do
       state != prev ->
-        {:noreply,
-         Mob.Socket.assign(socket,
-           ale_state: state,
-           ale_info: info,
-           ale_running: true,
-           ale_render_mono: now
-         )}
+        base = [ale_state: state, ale_info: info, ale_running: true, ale_render_mono: now]
+        {:noreply, Mob.Socket.assign(socket, base ++ chat_context(state, info))}
 
       # On the LINKING tab, refresh the live freq/channel readout on essentially
       # every dwell hop so it tracks the radio. Renders are now active-tab-only
@@ -1036,7 +1038,63 @@ defmodule MinutemodemMobile.ShellScreen do
     {:noreply, Mob.Socket.assign(socket, ale_event: {event, payload})}
   end
 
+  # -- ALE Chat (G.5.6) -----------------------------------------------------
+
+  # Inbound 4G message decoded off the air (broadcast by the ALE Receiver).
+  def handle_info({:ale, :message, payload}, socket) do
+    peer = socket.assigns[:chat_peer] || payload[:from]
+    Chat.record_received(peer, payload)
+    thread = if peer, do: Chat.thread(peer), else: socket.assigns[:chat_thread] || []
+    {:noreply, Mob.Socket.assign(socket, chat_peer: peer, chat_thread: thread)}
+  end
+
+  def handle_info({:change, :chat_changed, value}, socket) do
+    {:noreply, Mob.Socket.assign(socket, chat_draft: value)}
+  end
+
+  # Send the composed text on the active link.
+  def handle_info({:tap, {:chat_send}}, socket) do
+    text = socket.assigns[:chat_draft] |> to_string() |> String.trim()
+    peer = socket.assigns[:chat_peer]
+
+    cond do
+      text == "" ->
+        {:noreply, socket}
+
+      is_nil(peer) ->
+        {:noreply, Mob.Socket.assign(socket, status: "NO ACTIVE LINK")}
+
+      true ->
+        opts = [network_id: socket.assigns[:net] && socket.assigns.net.id]
+
+        case Chat.send(socket.assigns.rig_id, chat_self_addr(socket), peer, text, opts) do
+          {:ok, _msg} ->
+            {:noreply, Mob.Socket.assign(socket, chat_thread: Chat.thread(peer), chat_draft: "")}
+
+          {:error, reason} ->
+            {:noreply, Mob.Socket.assign(socket, status: "SEND FAILED: #{inspect(reason)}")}
+        end
+    end
+  end
+
   def handle_info(_msg, socket), do: {:noreply, socket}
+
+  # Chat conversation context for a link state: on :linked, key the thread by
+  # the peer/group address and load its history; otherwise leave chat as-is.
+  defp chat_context(:linked, info) do
+    peer = info && (info[:remote_addr] || info[:called_addr])
+    [chat_peer: peer, chat_thread: (peer && Chat.thread(peer)) || []]
+  end
+
+  defp chat_context(_state, _info), do: []
+
+  # Our own 4G self address (from the active network params), or nil.
+  defp chat_self_addr(socket) do
+    case parse_addr(Map.get(socket.assigns[:params] || %{}, "self_addr")) do
+      {:ok, addr} -> addr
+      _ -> nil
+    end
+  end
 
   # -- ALE helpers ----------------------------------------------------------
 
