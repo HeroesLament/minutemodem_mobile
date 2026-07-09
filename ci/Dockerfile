@@ -123,5 +123,18 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
  && chmod -R a+rX /opt/cargo /opt/rustup
 ENV PATH="/opt/cargo/bin:${PATH}"
 
+# --- hamlib_nif host build deps ---------------------------------------------
+# hamlib_nif's build.rs (via cc-rs + bindgen) needs, for the host mix-compile
+# pass: system hamlib headers/lib (found through pkg-config) and libclang (for
+# bindgen). The Android build instead links hamlib_ex's committed cross-built
+# libhamlib.a. libclang-dev is the LLVM runtime lib only, not the full compiler.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libhamlib-dev pkg-config libclang-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# bindgen locates libclang here; mob.exs derives the NDK toolchain from NDK_HOME.
+ENV LIBCLANG_PATH=/usr/lib/llvm-19/lib \
+    ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018
+
 WORKDIR /work
 CMD ["bash"]
