@@ -1,0 +1,58 @@
+---
+# MinuteModem — manual APK build + GitHub release (Concourse)
+# ===========================================================
+# Manual trigger only: nothing here sets `trigger: true`, so the job runs only
+# when you `fly trigger-job` it (or hit + in the web UI).
+#
+# Vars:
+#   Non-secret (pass with `-l ci/vars.yml` at set-pipeline time):
+#     ((git_uri)) ((git_branch)) ((ci_image_repo)) ((gh_repo))
+#   Secret (resolved from OpenBao via Concourse's Vault credential manager;
+#   OpenBao is Vault-API compatible). Store under concourse/main/minutemodem/:
+#     ((keystore_b64))              base64 of the release .jks
+#     ((keystore_store_password))
+#     ((keystore_key_alias))
+#     ((keystore_key_password))
+#     ((gh_token))                  GitHub PAT (Contents: read/write on the repo)
+#     ((git_ssh_key))               deploy key — only if the repo is private
+#
+# See ci/README.md for the full one-time setup.
+
+resources:
+  - name: repo
+    type: git
+    icon: git
+    source:
+      uri: ((git_uri))
+      branch: ((git_branch))
+
+  - name: ci-image
+    type: registry-image
+    icon: docker
+    source:
+      repository: ((ci_image_repo))     # e.g. docker.io/youruser/minutemodem-ci
+      tag: latest
+
+jobs:
+  - name: build-and-release
+    serial: true
+    plan:
+      - in_parallel:
+          - get: repo          # no `trigger: true` -> manual only
+          - get: ci-image
+
+      - task: build-apk
+        image: ci-image
+        file: repo/ci/tasks/build-apk.yml
+        params:
+          KEYSTORE_B64: ((keystore_b64))
+          KEYSTORE_STORE_PASSWORD: ((keystore_store_password))
+          KEYSTORE_KEY_ALIAS: ((keystore_key_alias))
+          KEYSTORE_KEY_PASSWORD: ((keystore_key_password))
+
+      - task: publish-release
+        image: ci-image
+        file: repo/ci/tasks/publish-release.yml
+        params:
+          GH_TOKEN: ((gh_token))
+          GH_REPO: ((gh_repo))          # e.g. HeroesLament/minutemodem_mobile

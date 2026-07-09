@@ -1,0 +1,16 @@
+---
+# Publishes artifacts/ to GitHub as a release via the gh CLI.
+# Image is supplied by the pipeline (`image: ci-image`).
+platform: linux
+
+inputs:
+  - name: repo         # for the script path
+  - name: artifacts    # the built APK/AAB + version.txt/commit.txt
+
+params:
+  GH_TOKEN:            # gh reads this from the environment automatically
+  GH_REPO:             # owner/name, e.g. HeroesLament/minutemodem_mobile
+
+run:
+  path: bash
+  args: ["repo/ci/tasks/publish-release.sh"]

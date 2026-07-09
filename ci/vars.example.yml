@@ -1,0 +1,10 @@
+# Non-secret pipeline vars. Copy to ci/vars.yml (gitignored) and fill in.
+#   fly -t home set-pipeline -p minutemodem -c ci/pipeline.yml -l ci/vars.yml
+#
+# Secrets (keystore_*, gh_token, git_ssh_key) do NOT go here — they resolve
+# from OpenBao via Concourse's Vault credential manager. See README.md.
+
+git_uri: git@github.com:HeroesLament/minutemodem_mobile.git
+git_branch: main
+ci_image_repo: docker.io/YOURUSER/minutemodem-ci
+gh_repo: HeroesLament/minutemodem_mobile

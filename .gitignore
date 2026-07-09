@@ -58,6 +58,9 @@ android/keystore.properties
 android/*.jks
 android/*.keystore
 
+# CI — non-secret var overrides (may reference private hosts); keep local
+ci/vars.yml
+
 # Bundled OTP runtime (build artifact, staged by mix mob.release)
 android/app/src/main/assets/otp.zip
 
