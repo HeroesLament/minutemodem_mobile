@@ -49,8 +49,13 @@ trap cleanup EXIT
 # --- build ------------------------------------------------------------------
 mix deps.get
 
-# Produces the signed AAB and populates android/local.properties with the Mob
-# OTP-runtime paths the subsequent Gradle APK build also relies on.
+# Download the Android OTP runtime bundles and write android/local.properties
+# (mob.mob_dir, mob.otp_release[_arm32]). That file is machine-specific and
+# gitignored, so CI must generate it — the Gradle build reads MOB_DIR / the OTP
+# paths from it, and the JNI CMakeLists needs ${MOB_DIR} to locate mob_nif.c.
+mix mob.install
+
+# Produces the signed AAB.
 mix mob.release --android
 
 # Signed, sideloadable APK.
