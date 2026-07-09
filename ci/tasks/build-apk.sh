@@ -49,11 +49,22 @@ trap cleanup EXIT
 # --- build ------------------------------------------------------------------
 mix deps.get
 
-# Download the Android OTP runtime bundles and write android/local.properties
-# (mob.mob_dir, mob.otp_release[_arm32]). That file is machine-specific and
-# gitignored, so CI must generate it — the Gradle build reads MOB_DIR / the OTP
-# paths from it, and the JNI CMakeLists needs ${MOB_DIR} to locate mob_nif.c.
+# Download the Android OTP runtime bundles (into $HOME/.mob/cache).
 mix mob.install
+
+# android/local.properties is machine-specific + gitignored, and mob.install
+# doesn't reliably leave one Gradle picks up in CI. Write it explicitly from the
+# bundles just downloaded: the JNI CMakeLists needs ${MOB_DIR} to find
+# mob_nif.c, and the build links against the OTP release (libbeam.a).
+OTP="$(ls -d "$HOME"/.mob/cache/otp-android-* 2>/dev/null | grep -v arm32 | head -1)"
+OTP_ARM32="$(ls -d "$HOME"/.mob/cache/otp-android-arm32-* 2>/dev/null | head -1)"
+cat > android/local.properties <<EOF
+sdk.dir=$ANDROID_SDK_ROOT
+mob.otp_release=$OTP
+mob.otp_release_arm32=${OTP_ARM32:-$OTP}
+mob.mob_dir=$PWD/deps/mob
+EOF
+echo "--- android/local.properties ---"; cat android/local.properties
 
 # Produces the signed AAB.
 mix mob.release --android
