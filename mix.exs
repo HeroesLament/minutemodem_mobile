@@ -23,8 +23,8 @@ defmodule MinutemodemMobile.MixProject do
   defp deps do
     [
       {:rustler, "~> 0.37"},
-      {:minutewave, path: "../minutewave_ex"},
-      {:hamlib_ex, path: "../hamlib_ex"},
+      {:minutewave, git: "https://github.com/HeroesLament/minutewave_ex.git", branch: "feat/lqa-engine"},
+      {:hamlib_ex, git: "https://github.com/HeroesLament/hamlib_ex.git", branch: "main"},
       {:mob, "~> 0.7"},
       {:mob_dev, "~> 0.5", only: :dev, runtime: false},
       {:ecto_sqlite3, "~> 0.18"},
