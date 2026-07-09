@@ -79,6 +79,16 @@ export HAMLIB_INCLUDE_DIR="$PWD/deps/hamlib_ex/android/hamlib/out/aarch64/usr/lo
 export HAMLIB_LIB_DIR="$PWD/deps/hamlib_ex/android/hamlib/out/aarch64/usr/local/lib"
 echo "--- NIF cross-compile env ---"; echo "CC=$CC_aarch64_linux_android"; echo "HAMLIB_LIB_DIR=$HAMLIB_LIB_DIR"
 
+# Cross-build Android hamlib (libhamlib.a + headers). Only the recipe is in VCS,
+# not its output (android/hamlib/out is a symlink to a local build), so a clean
+# checkout must build it: the script clones Hamlib 4.6.5 and cross-compiles with
+# the NDK into out/aarch64/usr/local, which HAMLIB_INCLUDE_DIR/LIB_DIR point at.
+HL="$PWD/deps/hamlib_ex/android/hamlib"
+rm -rf "$HL/out"
+( cd "$HL" && NDK="$ANDROID_NDK_HOME" bash build-hamlib-android.sh aarch64 )
+test -f "$HL/out/aarch64/usr/local/include/hamlib/rig.h" || { echo "!! hamlib headers missing after build"; exit 1; }
+test -f "$HL/out/aarch64/usr/local/lib/libhamlib.a" || { echo "!! libhamlib.a missing after build"; exit 1; }
+
 # Cross-compile the native NIFs to zig object files (zig-out/<abi>/*.o). This is
 # the piece `mix mob.deploy --native` runs via MobDev.NativeBuild.build_all/1 —
 # `mix mob.release` does NOT do it. Without these, the JNI CMakeLists falls back

@@ -130,6 +130,7 @@ ENV PATH="/opt/cargo/bin:${PATH}"
 # libhamlib.a. libclang-dev is the LLVM runtime lib only, not the full compiler.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libhamlib-dev pkg-config libclang-dev \
+      automake libtool gettext \
  && rm -rf /var/lib/apt/lists/*
 
 # bindgen locates libclang here; mob.exs derives the NDK toolchain from NDK_HOME.
