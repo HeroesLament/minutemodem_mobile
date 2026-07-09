@@ -84,12 +84,11 @@ export HAMLIB_LIB_DIR="$PWD/deps/hamlib_ex/android/hamlib/out/aarch64/usr/local/
 # parse the glibc /usr/include/stdint.h and dies on bits/libc-header-start.h.
 # Point bindgen at the NDK sysroot + target for the Android build ONLY (a
 # target-scoped var, so the host mix-compile pass keeps its own headers). Both
-# hyphen and underscore spellings are set since bindgen has matched either
-# across versions.
+# underscore spelling — the hyphenated triple isn't a valid shell identifier so
+# `export` rejects it, and bindgen (>=0.63) checks the underscore variant too
+# (both appear in the crate's rerun-if-env-changed list).
 NDK_SYSROOT="$(dirname "$NDK_BIN")/sysroot"
-BINDGEN_ANDROID_ARGS="--sysroot=$NDK_SYSROOT --target=aarch64-linux-android28"
-export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="$BINDGEN_ANDROID_ARGS"
-export "BINDGEN_EXTRA_CLANG_ARGS_aarch64-linux-android=$BINDGEN_ANDROID_ARGS"
+export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--sysroot=$NDK_SYSROOT --target=aarch64-linux-android28"
 echo "--- NIF cross-compile env ---"; echo "CC=$CC_aarch64_linux_android"; echo "HAMLIB_LIB_DIR=$HAMLIB_LIB_DIR"; echo "NDK_SYSROOT=$NDK_SYSROOT"
 
 # Cross-build Android hamlib (libhamlib.a + headers). Only the recipe is in VCS,
