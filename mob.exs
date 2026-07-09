@@ -28,7 +28,11 @@ config :mob_dev, bundle_id: "com.example.minutemodem_mobile"
 # cross-compiler only scans <app>/native/<name>/Cargo.toml.
 config :mob_dev,
   static_nifs: [
-    %{module: :phy_modem, archs: [:all]},
+    # arm64 only — the APK ships arm64-v8a only (see hamlib_nif note below), so
+    # building the armv7 pass is dead weight and needs an armv7 Rust target the
+    # CI image doesn't carry. Set back to [:all] (and add the armv7 Rust target)
+    # if you ever ship an armeabi-v7a APK.
+    %{module: :phy_modem, archs: [:android_arm64]},
     # arm64 only. mob_dev cross-compiles NIFs for every Android ABI in its
     # build loop regardless of the APK's abiFilters, so this MUST be
     # :android_arm64 (not :android) — otherwise the armv7 pass tries to
