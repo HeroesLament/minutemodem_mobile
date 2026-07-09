@@ -111,5 +111,17 @@ RUN yes | sdkmanager --licenses >/dev/null \
       "ndk;27.2.12479018" \
       "cmake;3.22.1" >/dev/null
 
+# --- Rust toolchain (rustler NIFs: hamlib_ex/native/hamlib_nif, phy_modem) --
+# The app's mob.exs supplies the Android cross-compile CC/AR (NDK
+# aarch64-linux-android28-clang + llvm-ar) and the crates ship .cargo/config;
+# the image only needs cargo + the aarch64-linux-android target. Installed to
+# /opt so it's not tied to a specific $HOME.
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --profile minimal --default-toolchain stable --no-modify-path \
+ && /opt/cargo/bin/rustup target add aarch64-linux-android \
+ && chmod -R a+rX /opt/cargo /opt/rustup
+ENV PATH="/opt/cargo/bin:${PATH}"
+
 WORKDIR /work
 CMD ["bash"]
