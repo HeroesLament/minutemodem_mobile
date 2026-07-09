@@ -66,6 +66,19 @@ mob.mob_dir=$PWD/deps/mob
 EOF
 echo "--- android/local.properties ---"; cat android/local.properties
 
+# hamlib_nif's build.rs (cc-rs + bindgen, statically linking the cross-built
+# libhamlib.a) needs the NDK aarch64 toolchain + the hamlib install tree. mob.exs
+# supplies these via nif_build_env, but that config isn't picked up in this CI
+# invocation, so export them explicitly. Paths point at the committed cross-built
+# hamlib under deps/hamlib_ex (the git dep), which exists in CI.
+NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+export CC_aarch64_linux_android="$NDK_BIN/aarch64-linux-android28-clang"
+export AR_aarch64_linux_android="$NDK_BIN/llvm-ar"
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android28-clang"
+export HAMLIB_INCLUDE_DIR="$PWD/deps/hamlib_ex/android/hamlib/out/aarch64/usr/local/include"
+export HAMLIB_LIB_DIR="$PWD/deps/hamlib_ex/android/hamlib/out/aarch64/usr/local/lib"
+echo "--- NIF cross-compile env ---"; echo "CC=$CC_aarch64_linux_android"; echo "HAMLIB_LIB_DIR=$HAMLIB_LIB_DIR"
+
 # Cross-compile the native NIFs to zig object files (zig-out/<abi>/*.o). This is
 # the piece `mix mob.deploy --native` runs via MobDev.NativeBuild.build_all/1 —
 # `mix mob.release` does NOT do it. Without these, the JNI CMakeLists falls back
