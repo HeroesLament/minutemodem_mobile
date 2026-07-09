@@ -66,7 +66,15 @@ mob.mob_dir=$PWD/deps/mob
 EOF
 echo "--- android/local.properties ---"; cat android/local.properties
 
-# Produces the signed AAB.
+# Cross-compile the native NIFs to zig object files (zig-out/<abi>/*.o). This is
+# the piece `mix mob.deploy --native` runs via MobDev.NativeBuild.build_all/1 —
+# `mix mob.release` does NOT do it. Without these, the JNI CMakeLists falls back
+# to a nonexistent .c path (mob ships .zig NIF glue) and Gradle fails. We call
+# build_all directly to skip mob.deploy's device-push/compat logic (no device
+# in CI). Halt on any {:error, _} so a NIF build failure fails the CI step.
+mix run --no-start -e 'r = MobDev.NativeBuild.build_all(platforms: [:android], slim: true); IO.inspect(r, label: "mob native build"); if Enum.any?(r, &match?({:error, _}, &1)), do: System.halt(1)'
+
+# Produces the signed AAB (Gradle now finds the zig-built NIF objects).
 mix mob.release --android
 
 # Signed, sideloadable APK.
