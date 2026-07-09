@@ -77,7 +77,20 @@ export AR_aarch64_linux_android="$NDK_BIN/llvm-ar"
 export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android28-clang"
 export HAMLIB_INCLUDE_DIR="$PWD/deps/hamlib_ex/android/hamlib/out/aarch64/usr/local/include"
 export HAMLIB_LIB_DIR="$PWD/deps/hamlib_ex/android/hamlib/out/aarch64/usr/local/lib"
-echo "--- NIF cross-compile env ---"; echo "CC=$CC_aarch64_linux_android"; echo "HAMLIB_LIB_DIR=$HAMLIB_LIB_DIR"
+
+# hamlib_nif's build.rs runs bindgen over hamlib_shim.h. cc-rs compiles the C
+# shim with the NDK clang (which knows its own sysroot), but bindgen invokes
+# libclang directly and defaults to the HOST include paths — so it tries to
+# parse the glibc /usr/include/stdint.h and dies on bits/libc-header-start.h.
+# Point bindgen at the NDK sysroot + target for the Android build ONLY (a
+# target-scoped var, so the host mix-compile pass keeps its own headers). Both
+# hyphen and underscore spellings are set since bindgen has matched either
+# across versions.
+NDK_SYSROOT="$(dirname "$NDK_BIN")/sysroot"
+BINDGEN_ANDROID_ARGS="--sysroot=$NDK_SYSROOT --target=aarch64-linux-android28"
+export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="$BINDGEN_ANDROID_ARGS"
+export "BINDGEN_EXTRA_CLANG_ARGS_aarch64-linux-android=$BINDGEN_ANDROID_ARGS"
+echo "--- NIF cross-compile env ---"; echo "CC=$CC_aarch64_linux_android"; echo "HAMLIB_LIB_DIR=$HAMLIB_LIB_DIR"; echo "NDK_SYSROOT=$NDK_SYSROOT"
 
 # Cross-build Android hamlib (libhamlib.a + headers). Only the recipe is in VCS,
 # not its output (android/hamlib/out is a symlink to a local build), so a clean
