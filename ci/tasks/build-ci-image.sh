@@ -27,13 +27,25 @@ set -eu
 # Registry host = everything before the first '/' in the image ref.
 HARBOR_HOST="${IMAGE_REF%%/*}"
 
-# --- trust Harbor's private CA in buildkitd ---------------------------------
+# --- trust Harbor's private CA ----------------------------------------------
 mkdir -p /etc/buildkit
 printf '%s\n' "$HARBOR_CA" > /etc/buildkit/harbor-ca.pem
 cat > /etc/buildkit/buildkitd.toml <<EOF
 [registry."${HARBOR_HOST}"]
   ca = ["/etc/buildkit/harbor-ca.pem"]
 EOF
+
+# buildkit's per-registry ca= covers the registry data-plane, but buildkitd's
+# OAuth *token* fetch (POST /service/token) goes through Go's stdlib TLS, which
+# uses the system trust store and ignores buildkit's registry config. So build
+# a combined bundle (existing system CAs — needed for the docker.io base image
+# + dockerfile frontend — plus Harbor's CA) and point Go at it via SSL_CERT_FILE.
+: > /tmp/ca-bundle.pem
+for sysca in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem; do
+  if [ -f "$sysca" ]; then cat "$sysca" >> /tmp/ca-bundle.pem; break; fi
+done
+cat /etc/buildkit/harbor-ca.pem >> /tmp/ca-bundle.pem
+export SSL_CERT_FILE=/tmp/ca-bundle.pem
 
 # --- registry auth for the push (buildctl reads DOCKER_CONFIG/config.json) ---
 export DOCKER_CONFIG=/root/.docker
