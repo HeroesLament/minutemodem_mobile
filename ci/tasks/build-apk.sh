@@ -148,7 +148,19 @@ AAB="android/app/build/outputs/bundle/release/app-release.aab"
 test -f "$APK" || { echo "!! APK not found at $APK"; exit 1; }
 
 SHA="$(git rev-parse --short HEAD)"
-VER="build-$(date -u +%Y%m%d-%H%M%S)-${SHA}"
+
+# Version source depends on the flow (see VERSION_MODE param):
+#   tag       — prod release off a v* tag; VER = the exact tag (e.g. v1.2.3).
+#   timestamp — dev prerelease; VER = build-<UTC>-<sha> (default).
+case "${VERSION_MODE:-timestamp}" in
+  tag)
+    VER="$(git describe --tags --exact-match 2>/dev/null || true)"
+    [ -n "$VER" ] || { echo "!! VERSION_MODE=tag but HEAD has no exact tag"; exit 1; }
+    ;;
+  *)
+    VER="build-$(date -u +%Y%m%d-%H%M%S)-${SHA}"
+    ;;
+esac
 
 cp "$APK" "$OUT/minutemodem-${VER}.apk"
 [ -f "$AAB" ] && cp "$AAB" "$OUT/minutemodem-${VER}.aab" || echo "(no AAB — APK only)"

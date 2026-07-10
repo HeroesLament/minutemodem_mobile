@@ -1,58 +1,113 @@
 ---
-# MinuteModem — manual APK build + GitHub release (Concourse)
-# ===========================================================
-# Manual trigger only: nothing here sets `trigger: true`, so the job runs only
-# when you `fly trigger-job` it (or hit + in the web UI).
+# MinuteModem — CI: dev prereleases + tagged prod releases (Concourse)
+# ====================================================================
+# Two automated flows, sharing the same build/publish task scripts:
+#
+#   dev-prerelease   commit to `dev`      -> build -> GitHub *prerelease*
+#                    (build-<UTC>-<sha>, keep-only-newest prune)
+#   tagged-release   push a v* tag on main -> build -> GitHub *Release*
+#                    (named after the tag, marked latest, never pruned)
+#
+# Both auto-trigger. They share `serial_groups: [build]` so only one runs at a
+# time on the single ccis1 worker.
 #
 # Vars:
 #   Non-secret (pass with `-l ci/vars.yml` at set-pipeline time):
-#     ((git_uri)) ((git_branch)) ((ci_image_repo)) ((gh_repo))
+#     ((git_uri)) ((dev_branch)) ((release_branch)) ((release_tag_filter))
+#     ((ci_image_repo)) ((gh_repo))
 #   Secret (resolved from OpenBao via Concourse's Vault credential manager;
-#   OpenBao is Vault-API compatible). Store under concourse/main/minutemodem/:
-#     ((keystore_b64))              base64 of the release .jks
-#     ((keystore_store_password))
-#     ((keystore_key_alias))
-#     ((keystore_key_password))
-#     ((gh_token))                  GitHub PAT (Contents: read/write on the repo)
-#     ((git_ssh_key))               deploy key — only if the repo is private
+#   store under concourse/main/minutemodem/):
+#     ((keystore_b64)) ((keystore_store_password)) ((keystore_key_alias))
+#     ((keystore_key_password)) ((gh_token))
 #
 # See ci/README.md for the full one-time setup.
 
 resources:
-  - name: repo
+  # Dev branch — every commit produces a version (auto-trigger below).
+  - name: repo-dev
     type: git
     icon: git
     source:
       uri: ((git_uri))
-      branch: ((git_branch))
+      branch: ((dev_branch))              # e.g. dev
+
+  # Release branch — only commits carrying a matching tag produce a version,
+  # and the resource checks out that tag. `tag_filter` is scoped to
+  # ((release_branch)) so a v* tag on a feature branch won't fire a release.
+  - name: repo-release
+    type: git
+    icon: git
+    source:
+      uri: ((git_uri))
+      branch: ((release_branch))          # e.g. main
+      tag_filter: ((release_tag_filter))  # e.g. v[0-9]*
 
   - name: ci-image
     type: registry-image
     icon: docker
     source:
-      repository: ((ci_image_repo))     # e.g. docker.io/youruser/minutemodem-ci
+      repository: ((ci_image_repo))
       tag: latest
 
 jobs:
-  - name: build-and-release
+  # ── dev branch commit -> prerelease ────────────────────────────────────────
+  - name: dev-prerelease
     serial: true
+    serial_groups: [build]
     plan:
       - in_parallel:
-          - get: repo          # no `trigger: true` -> manual only
+          - get: repo-dev
+            trigger: true
           - get: ci-image
 
       - task: build-apk
         image: ci-image
-        file: repo/ci/tasks/build-apk.yml
+        file: repo-dev/ci/tasks/build-apk.yml
+        input_mapping: { repo: repo-dev }
         params:
           KEYSTORE_B64: ((keystore_b64))
           KEYSTORE_STORE_PASSWORD: ((keystore_store_password))
           KEYSTORE_KEY_ALIAS: ((keystore_key_alias))
           KEYSTORE_KEY_PASSWORD: ((keystore_key_password))
+          VERSION_MODE: timestamp
 
       - task: publish-release
         image: ci-image
-        file: repo/ci/tasks/publish-release.yml
+        file: repo-dev/ci/tasks/publish-release.yml
+        input_mapping: { repo: repo-dev }
         params:
           GH_TOKEN: ((gh_token))
-          GH_REPO: ((gh_repo))          # e.g. HeroesLament/minutemodem_mobile
+          GH_REPO: ((gh_repo))
+          PRERELEASE: "true"
+          PRUNE_PRERELEASES: "true"
+
+  # ── v* tag on main -> prod Release ─────────────────────────────────────────
+  - name: tagged-release
+    serial: true
+    serial_groups: [build]
+    plan:
+      - in_parallel:
+          - get: repo-release
+            trigger: true
+          - get: ci-image
+
+      - task: build-apk
+        image: ci-image
+        file: repo-release/ci/tasks/build-apk.yml
+        input_mapping: { repo: repo-release }
+        params:
+          KEYSTORE_B64: ((keystore_b64))
+          KEYSTORE_STORE_PASSWORD: ((keystore_store_password))
+          KEYSTORE_KEY_ALIAS: ((keystore_key_alias))
+          KEYSTORE_KEY_PASSWORD: ((keystore_key_password))
+          VERSION_MODE: tag
+
+      - task: publish-release
+        image: ci-image
+        file: repo-release/ci/tasks/publish-release.yml
+        input_mapping: { repo: repo-release }
+        params:
+          GH_TOKEN: ((gh_token))
+          GH_REPO: ((gh_repo))
+          PRERELEASE: "false"
+          PRUNE_PRERELEASES: "false"

@@ -5,6 +5,8 @@ set -euo pipefail
 
 : "${GH_TOKEN:?missing GH_TOKEN}"
 : "${GH_REPO:?missing GH_REPO}"
+PRERELEASE="${PRERELEASE:-true}"
+PRUNE_PRERELEASES="${PRUNE_PRERELEASES:-false}"
 
 OUT="$PWD/artifacts"
 VER="$(cat "$OUT/version.txt")"
@@ -16,26 +18,44 @@ for f in "$OUT"/minutemodem-*.aab; do
   [ -e "$f" ] && FILES+=("$f")
 done
 
-echo "Publishing $VER ($SHA) to $GH_REPO:"
+# Two flows share this script:
+#   PRERELEASE=true  — dev branch commit; a marked prerelease, VER is the
+#                      build-<UTC>-<sha> tag (created at --target SHA).
+#   PRERELEASE=false — prod release; VER is a v* git tag that already exists,
+#                      published as a full (latest) Release.
+FLAGS=()
+if [ "$PRERELEASE" = "true" ]; then
+  FLAGS+=(--prerelease)
+  NOTES="Automated Concourse prerelease from ${SHA} (dev branch)."
+else
+  FLAGS+=(--latest)
+  NOTES="MinuteModem ${VER} — automated Concourse release from ${SHA}."
+fi
+
+echo "Publishing $VER ($SHA) to $GH_REPO (prerelease=$PRERELEASE):"
 printf '  %s\n' "${FILES[@]}"
 
-# `gh release create <tag>` creates the tag at --target if it doesn't exist.
-# --prerelease: manual dev builds aren't promoted stable releases.
+# `gh release create <tag>` uses an existing tag (v* prod releases) or creates
+# it at --target when absent (dev prereleases).
 gh release create "$VER" \
   --repo "$GH_REPO" \
   --target "$SHA" \
   --title "MinuteModem $VER" \
-  --notes "Automated Concourse build from ${SHA} (manual trigger)." \
-  --prerelease \
+  --notes "$NOTES" \
+  "${FLAGS[@]}" \
   "${FILES[@]}"
 
 echo "== published $VER =="
 
 # ── Prune older prereleases — keep only the one just published ───────────────
-# Testers pull "the latest prerelease", so old dev builds are just clutter.
-# Delete every OTHER prerelease (and its git tag); full/stable releases are
-# never touched (select .isPrerelease). Runs after a successful create so a
-# publish failure never removes the previous good build.
+# Dev only (PRUNE_PRERELEASES=true): testers pull "the latest prerelease", so
+# old dev builds are clutter. Only ever deletes prereleases (select
+# .isPrerelease) — full/stable Releases are never touched. Guarded off for the
+# prod release flow so a tagged release never removes the dev prereleases.
+if [ "$PRUNE_PRERELEASES" != "true" ]; then
+  echo "(prune disabled — PRUNE_PRERELEASES=$PRUNE_PRERELEASES)"
+  exit 0
+fi
 echo "Pruning old prereleases (keeping $VER)…"
 # mapfile + process substitution (not a pipe) so a no-match grep can't trip
 # `set -o pipefail` and fail the build when there's nothing to prune.

@@ -10,6 +10,8 @@ inputs:
 params:
   GH_TOKEN:            # gh reads this from the environment automatically
   GH_REPO:             # owner/name, e.g. HeroesLament/minutemodem_mobile
+  PRERELEASE: "true"   # "true" -> --prerelease (dev); "false" -> full Release (tag)
+  PRUNE_PRERELEASES: "false"  # "true" (dev only) -> keep just the newest prerelease
 
 run:
   path: bash

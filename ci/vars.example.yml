@@ -4,7 +4,9 @@
 # Secrets (keystore_*, gh_token, git_ssh_key) do NOT go here — they resolve
 # from OpenBao via Concourse's Vault credential manager. See README.md.
 
-git_uri: git@github.com:HeroesLament/minutemodem_mobile.git
-git_branch: main
+git_uri: https://github.com/HeroesLament/minutemodem_mobile.git
+dev_branch: dev                 # commits here -> prerelease
+release_branch: main            # v* tags here -> prod Release
+release_tag_filter: 'v[0-9]*'   # glob: v1.2.3, v0.7.5, …
 ci_image_repo: docker.io/YOURUSER/minutemodem-ci
 gh_repo: HeroesLament/minutemodem_mobile

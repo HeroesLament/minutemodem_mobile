@@ -14,6 +14,9 @@ params:
   KEYSTORE_STORE_PASSWORD:
   KEYSTORE_KEY_ALIAS:
   KEYSTORE_KEY_PASSWORD:
+  # "tag"       -> version = the git tag on this commit (prod releases, v1.2.3)
+  # "timestamp" -> version = build-<UTC>-<sha>          (dev prereleases)
+  VERSION_MODE: timestamp
 
 run:
   path: bash
