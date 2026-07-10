@@ -110,6 +110,8 @@ jobs:
           platform: linux
           inputs:
             - name: repo-ci-image
+          caches:
+            - path: buildkit-cache     # persists buildkit's layer cache
           params:
             IMAGE_REF: ((ci_image_repo)):latest
             HARBOR_ROBOT_USER: ((harbor_robot_user))

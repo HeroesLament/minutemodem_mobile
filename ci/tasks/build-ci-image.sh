@@ -44,9 +44,18 @@ cat > "$DOCKER_CONFIG/config.json" <<EOF
 EOF
 
 # --- start buildkitd + wait for it ------------------------------------------
+# --oci-worker-net=host: run RUN steps on the host network namespace so DNS +
+#   package/tool downloads are as fast as the worker itself (a bare buildkitd
+#   otherwise uses a slow default net path — apt/curl steps crawl).
+# --root <cache>: persist buildkit's layer cache across runs via a Concourse
+#   task cache, so an unchanged Dockerfile rebuilds incrementally instead of
+#   recompiling everything from scratch each time.
 mkdir -p /run/buildkit
+BK_ROOT="$(pwd)/buildkit-cache"
+mkdir -p "$BK_ROOT"
 export BUILDKIT_HOST=unix:///run/buildkit/buildkitd.sock
 buildkitd --config /etc/buildkit/buildkitd.toml --addr "$BUILDKIT_HOST" \
+  --oci-worker-net=host --root "$BK_ROOT" \
   >/tmp/buildkitd.log 2>&1 &
 
 i=0
