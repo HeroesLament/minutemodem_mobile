@@ -96,33 +96,43 @@ repo-dev/────▶ dev-prerelease  ─▶ APK ─▶ GitHub prerelease    
 repo-release ▶ tagged-release  ─▶ APK ─▶ GitHub release       [S3 artifact cache]
 ```
 
-## The load-bearing design decision (de-risk first)
+## The load-bearing mechanism (confirmed by code)
 
-Concourse mounts the app repo as a **fresh input** (`./repo`) *next to* the
-image's baked content — it does not overlay onto the image's copy of the repo.
-So native outputs that currently live *inside* the repo checkout
-(`deps/hamlib_ex/android/hamlib/out`, `zig-out/`) can't simply be baked at their
-in-repo path and expected to survive the Tier-2 checkout.
+Reading `android/app/src/main/jni/CMakeLists.txt` settles the core question. The
+native build's real output is a **prebuilt `.so` in
+`android/app/src/main/jniLibs/<abi>/`** — a ~55 MB `libminutemodem_mobile.so`
+(embedded BEAM + all static NIFs incl. `hamlib_nif`/`phy_modem`, with Hamlib
+statically linked in), plus `libsqlite3_nif.so`. CMake's consume order is:
 
-**Plan:** `build-native-base` bakes those outputs to **stable, out-of-repo
-paths** (e.g. `/opt/mob-cache/hamlib-out`, `/opt/mob-cache/zig-out`), and the
-Tier-2 `build-apk.sh` copies them into the checked-out repo's expected
-(gitignored) locations before `mob.release`, then skips steps 5–6. The OTP
-cache (step 3) already lives at `$HOME/.mob/cache`, which is image-native and
-survives, so it needs no copy.
+1. `jniLibs/<abi>/libminutemodem_mobile.so` exists → **imported as-is, all native
+   building skipped**;
+2. else `android/app/build/zig-out/<abi>/*.o` → link them;
+3. else compile `.c` sources.
 
-Open questions to resolve in the spike (Phase 1):
+And `build-apk.sh` already notes `mix mob.release` does **not** run `build_all`
+(the native build is a separate explicit step). So the split is simpler than the
+first draft assumed — we bake the *finished* `.so`, not the intermediate
+`zig-out`/hamlib trees:
 
-1. Does `mix mob.release` / Gradle consume pre-placed `zig-out/<abi>/*.o` without
-   re-running `build_all`? (If Gradle re-invokes the NIF build, we point it at
-   the baked objects or stub the build step.)
-2. Are the baked NIF objects valid against a fresh `deps.get` at the same
-   `mix.lock`? (They must be — same crate + dep versions. This is why
-   `repo-native`'s trigger includes `mix.lock`.)
-3. Do the `mob` / `mob_dev` quilt patches need to be applied before baking
-   (Tier 1) or only in Tier 2? (The hamlib_ex OTP-staging patch affects step 6,
-   so it must be applied in Tier 1; the vendor-USB patch affects the `.so` link
-   at Gradle time, so Tier 2.)
+- **Bake into native-base:** `jniLibs/<abi>/*.so` (the ~55 MB lib already has
+  Hamlib + the NIFs linked in) **+** the OTP runtime cache
+  (`$HOME/.mob/cache/otp-android-*`). No separate hamlib/`zig-out` baking — those
+  are already inside the `.so`.
+- **App tier:** restore the baked `.so`s into `jniLibs/<abi>/` (+ OTP cache),
+  then `mix mob.release` (assembles the OTP release with the new app beams — app
+  code lives in the release, **not** the `.so`) + `gradle assembleRelease`
+  (CMake imports the prebuilt `.so`). Steps 5 (hamlib cross-build) and 6
+  (`build_all`) drop out entirely.
+
+Because the `.so` links a specific OTP's `libbeam.a` + the NIF/Hamlib sources but
+**not** app beams, it's app-code-independent: it only changes on `native/**`, the
+OTP version, Hamlib, or mob's zig glue — exactly the `repo-native` trigger set.
+
+**One thing left for the build spike to confirm:** that `mix mob.release` /
+Gradle don't regenerate the `.so` and overwrite the baked one. The code says they
+shouldn't (CMake imports an existing `.so`; `mob.release` skips `build_all`), but
+a run proves it — and that check folds naturally into the first real
+`build-native-base` run rather than needing a separate throwaway.
 
 Keep `mix deps.get` + patches in **Tier 2** (with a Garage hex cache) rather
 than baking deps, so `native-base` isn't coupled to `mix.lock` churn.
