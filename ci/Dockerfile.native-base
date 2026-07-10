@@ -1,0 +1,30 @@
+# syntax=docker/dockerfile:1
+#
+# Tier 1 — minutemodem-native-base
+# ================================
+# FROM the ci-image toolchain, plus the baked slow native layer (Hamlib +
+# OTP runtime + the finished libminutemodem_mobile.so). Rebuilt only when the
+# native inputs change (native/**, mix.lock, .tool-versions, the mob_dev patch,
+# or the ci-image beneath it) — see the build-native-base job / repo-native
+# resource. The slimmed app build (Tier 2) FROMs this and skips the hamlib
+# cross-build + build_all entirely.
+#
+# The reusable outputs land at:
+#   /opt/mob-bake/jniLibs/<abi>/*.so   (prebuilt native libs)
+#   $HOME/.mob/cache/otp-android-*     (OTP runtime, image-native)
+
+ARG CI_IMAGE=harbor.admin.siliconiq.com/minutemodem/minutemodem-ci:latest
+FROM ${CI_IMAGE}
+
+WORKDIR /work
+COPY . /work
+
+# Steps 1–6 of the build (deps + patches + OTP install + Hamlib cross-build +
+# build_all) then snapshot jniLibs/*.so to /opt/mob-bake.
+RUN bash ci/tasks/native-base-bake.sh
+
+# The build tree is throwaway; the reusable outputs live in /opt/mob-bake and
+# $HOME/.mob/cache. (Kept as a separate layer for now; a multi-stage squeeze is
+# a later optimization.)
+RUN rm -rf /work
+WORKDIR /

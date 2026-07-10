@@ -16,6 +16,7 @@ release_tag_filter: 'v[0-9]*'   # glob: v1.2.3, v0.7.5, …
 # build-ci-image job; oci-build-task is the buildkit image that job runs in.
 ci_image_repo: harbor.example.lan/minutemodem/minutemodem-ci
 oci_build_image_repo: harbor.example.lan/minutemodem/oci-build-task
+native_base_image_repo: harbor.example.lan/minutemodem/minutemodem-native-base
 
 gh_repo: HeroesLament/minutemodem_mobile
 

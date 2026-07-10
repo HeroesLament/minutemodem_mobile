@@ -22,7 +22,8 @@
 # Vars:
 #   Non-secret (pass with `-l ci/vars.yml` at set-pipeline time):
 #     ((git_uri)) ((dev_branch)) ((release_branch)) ((release_tag_filter))
-#     ((ci_image_repo)) ((oci_build_image_repo)) ((harbor_ca)) ((gh_repo))
+#     ((ci_image_repo)) ((oci_build_image_repo)) ((native_base_image_repo))
+#     ((harbor_ca)) ((gh_repo))
 #   Secret (resolved from OpenBao via Concourse's Vault credential manager;
 #   store under concourse/main/minutemodem/):
 #     ((keystore_b64)) ((keystore_store_password)) ((keystore_key_alias))
@@ -64,6 +65,26 @@ resources:
         - .tool-versions
         - ci/patches/**
         - ci/tasks/build-ci-image.sh
+
+  # Native inputs only — build-native-base fires when the slow native layer
+  # (NIFs, Hamlib/dep pins, OTP/zig toolchain, the native bake) changes, not on
+  # every app commit.
+  - name: repo-native
+    type: git
+    icon: git
+    source:
+      uri: ((git_uri))
+      branch: ((dev_branch))
+      paths:
+        - native/**
+        - mob.exs
+        - mix.lock
+        - .tool-versions
+        - android/app/src/main/jni/**
+        - ci/patches/**
+        - ci/Dockerfile.native-base
+        - ci/tasks/native-base-bake.sh
+        - ci/tasks/build-native-base.sh
 
   # The CI build image, hosted in Harbor. Pulled by the APK jobs; pushed by
   # build-ci-image. Robot creds + the Root CA come from OpenBao/vars.
@@ -120,6 +141,41 @@ jobs:
           run:
             path: sh
             args: [repo-ci-image/ci/tasks/build-ci-image.sh]
+
+  # ── bake the slow native layer into minutemodem-native-base ─────────────────
+  # Tier 1: FROM ci-image, adds the cross-built Hamlib + OTP runtime + the
+  # prebuilt libminutemodem_mobile.so (see ci/Dockerfile.native-base). Fires on
+  # native changes (repo-native) or a new ci-image. buildkit pushes straight to
+  # Harbor with a registry layer cache (:buildcache) so rebuilds are incremental
+  # and survive a worker reset. (No `passed:` on ci-image — build-ci-image pushes
+  # via buildkit, not a Concourse put, so the cascade rides on trigger instead.)
+  - name: build-native-base
+    serial: true
+    plan:
+      - in_parallel:
+          - get: repo-native
+            trigger: true
+          - get: ci-image
+            trigger: true
+          - get: oci-build-image
+      - task: build-and-push
+        privileged: true
+        image: oci-build-image
+        config:
+          platform: linux
+          inputs:
+            - name: repo-native
+          caches:
+            - path: buildkit-cache
+          params:
+            IMAGE_REF: ((native_base_image_repo)):latest
+            CI_IMAGE: ((ci_image_repo)):latest
+            HARBOR_ROBOT_USER: ((harbor_robot_user))
+            HARBOR_ROBOT_TOKEN: ((harbor_robot_token))
+            HARBOR_CA: ((harbor_ca))
+          run:
+            path: sh
+            args: [repo-native/ci/tasks/build-native-base.sh]
 
   # ── dev branch commit -> prerelease ────────────────────────────────────────
   - name: dev-prerelease
