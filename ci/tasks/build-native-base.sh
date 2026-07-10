@@ -67,7 +67,14 @@ while [ "$i" -lt 60 ]; do
 done
 buildctl debug workers >/dev/null 2>&1 || { echo "!! buildkitd never became ready"; cat /tmp/buildkitd.log; exit 1; }
 
-# --- build + push, with a Harbor registry layer cache -----------------------
+# --- build + push -----------------------------------------------------------
+# NOTE: no registry (mode=max) layer cache. The bake RUN layer keys off the
+# COPY of the repo, so it invalidates on every commit that touches native-base's
+# inputs — which is exactly what triggers this job. So the registry cache almost
+# never hit the expensive step, while importing its ~3 GB of mode=max layers up
+# front crawled and filled the worker disk (a build hung 34 min on --import-cache
+# alone). buildkit's local --root cache (the buildkit-cache task cache below)
+# still speeds the FROM/base layers across runs on the same worker.
 echo "== building ${IMAGE_REF} (FROM ${CI_IMAGE}) =="
 buildctl build \
   --frontend dockerfile.v0 \
@@ -75,8 +82,6 @@ buildctl build \
   --local dockerfile=repo-native/ci \
   --opt filename=Dockerfile.native-base \
   --opt build-arg:CI_IMAGE="${CI_IMAGE}" \
-  --import-cache "type=registry,ref=${CACHE_REF}" \
-  --export-cache "type=registry,ref=${CACHE_REF},mode=max,ignore-error=true" \
   --output "type=image,name=${IMAGE_REF},push=true"
 
-echo "== pushed ${IMAGE_REF} (cache: ${CACHE_REF}) =="
+echo "== pushed ${IMAGE_REF} =="
