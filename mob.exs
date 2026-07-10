@@ -72,11 +72,19 @@ ndk_host_tag =
 ndk_bin = Path.join([ndk_home, "toolchains", "llvm", "prebuilt", ndk_host_tag, "bin"])
 hamlib_out = Path.join(File.cwd!(), "../hamlib_ex/android/hamlib/out/aarch64/usr/local")
 
+# The cross-built Android Hamlib lives at a sibling checkout locally
+# (../hamlib_ex/…) but under deps/hamlib_ex/… in CI, where hamlib_ex is a git
+# dep and build-apk.sh cross-builds it there. Let an explicit env override win
+# (CI exports HAMLIB_INCLUDE_DIR/HAMLIB_LIB_DIR); fall back to the sibling
+# default for local builds. Without this, build_all passes the sibling path as
+# the cargo env and hamlib_nif's build.rs can't find hamlib/rig.h in CI.
 config :mob_dev,
   nif_build_env: %{
     hamlib_nif: %{
-      "HAMLIB_INCLUDE_DIR" => Path.join(hamlib_out, "include"),
-      "HAMLIB_LIB_DIR" => Path.join(hamlib_out, "lib"),
+      "HAMLIB_INCLUDE_DIR" =>
+        System.get_env("HAMLIB_INCLUDE_DIR") || Path.join(hamlib_out, "include"),
+      "HAMLIB_LIB_DIR" =>
+        System.get_env("HAMLIB_LIB_DIR") || Path.join(hamlib_out, "lib"),
       # cc-rs target-scoped tool overrides (underscores match the target triple).
       "CC_aarch64-linux-android" => Path.join(ndk_bin, "aarch64-linux-android28-clang"),
       "AR_aarch64-linux-android" => Path.join(ndk_bin, "llvm-ar")
