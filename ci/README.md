@@ -10,19 +10,37 @@ tmpfile at build time and shreds it on exit.
 ## Layout
 
     ci/
-      Dockerfile               CI build image (toolchain + Android SDK + gh)
-      pipeline.yml             the manual build-and-release job
+      Dockerfile               ci-image (toolchain + Android SDK/NDK + gh)
+      Dockerfile.native-base   native-base = ci-image + baked Hamlib/OTP/.so
+      pipeline.yml             build-ci-image, build-native-base, dev/tagged jobs
       vars.example.yml         non-secret vars template -> copy to ci/vars.yml
+      MULTIPART-PLAN.md        the tiered-build plan + status
+      MOB-TIERED-CI.md         community write-up of the pattern
       tasks/
-        build-apk.yml/.sh      build the signed APK/AAB, stage in artifacts/
+        build-ci-image.sh      buildkit -> Harbor (ci-image)
+        native-base-bake.sh    steps 1-6 + stage jniLibs/*.so (runs in native-base)
+        build-native-base.sh   buildkit -> Harbor (native-base) + registry cache
+        build-apk.yml/.sh      build the signed APK/AAB (auto-detects native-base)
+        s3-cache.sh            best-effort Garage S3 cache (Gradle + _build)
         publish-release.yml/.sh  gh release create + upload
 
 ## How it fits together
 
-    [git repo] ─┐
-                ├─► build-apk  ─► artifacts/{apk,aab,version,commit} ─► publish-release ─► GitHub Release
-    [ci-image] ─┘        ▲                                                     ▲
-                         │ keystore_* from OpenBao                            │ gh_token from OpenBao
+Three tiers, each rebuilt only on its own inputs (see `MULTIPART-PLAN.md` for
+the full design, `MOB-TIERED-CI.md` for the pattern write-up):
+
+    build-ci-image ─► ci-image            (Erlang/Elixir/zig + Android SDK/NDK)
+                          │
+    build-native-base ─► native-base      (+ cross-built Hamlib + OTP + prebuilt .so)
+                          │
+    [repo] ─► dev-prerelease / tagged-release ─► APK ─► GitHub Release
+                   ▲ image: native-base — build-apk.sh restores the baked .so and
+                   │ skips the Hamlib cross-build + build_all.
+                   │ keystore_*/gh_token from OpenBao; Gradle/_build cache in Garage S3.
+
+A native change (`native/**`, `mix.lock`, `.tool-versions`, the mob_dev patch)
+fires `build-native-base`; an app-only commit runs just the app tier on the warm
+`native-base`.
 
 ## One-time setup
 

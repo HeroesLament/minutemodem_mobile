@@ -8,6 +8,30 @@ This is somewhat new ground for Mob-on-Android CI, so the plan is written to be
 executed in small, independently verifiable steps — and to double as a
 reference others in the Mob community can follow.
 
+## Status — built (July 2026)
+
+- **Phase 0 ✅** Garage bucket `ci-artifact-cache` + scoped key; `garage_cache_key_*` in OpenBao.
+- **Phase 1 ✅** De-risk (by code): the bake target is the finished
+  `jniLibs/<abi>/*.so` + the OTP cache; Gradle's CMake imports the prebuilt
+  `.so` and skips native building; `mob.release` doesn't run `build_all`.
+- **Phase 2 ✅** `build-native-base` builds `minutemodem-native-base`
+  (ci-image + Hamlib + OTP + prebuilt `.so`, ~3.2 GB) and pushes it to Harbor
+  with a `:buildcache` registry layer cache.
+- **Phase 3 ✅ (verified end-to-end)** App jobs run on `native-base`;
+  `build-apk.sh` auto-detects the baked layer and skips the Hamlib cross-build
+  + `build_all`. `dev-prerelease` pulled native-base, restored the `.so`, and
+  Gradle built + published a working signed APK (9m16s incl. a one-time 3.2 GB
+  image pull; the native work — previously ~10 min — is gone).
+- **Phase 4 ✅** Best-effort Garage S3 cache of `~/.gradle/caches` + `_build`
+  via `ci/tasks/s3-cache.sh` — restored on start, saved on success, never fails
+  the build.
+- **Phase 5 ✅** This doc + `ci/README.md` + the write-up (`ci/MOB-TIERED-CI.md`).
+
+The graph cascades: `build-ci-image → ci-image`, `build-native-base →
+native-base`, `dev-prerelease` / `tagged-release → APK`. A native change fires
+`build-native-base` (incremental via the Harbor `:buildcache`); an app-only
+commit runs just the app tier on the warm `native-base`.
+
 ## Goal
 
 - **Fast common case:** an Elixir/app-only commit builds in a few minutes, not ~15.
