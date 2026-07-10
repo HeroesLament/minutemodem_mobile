@@ -1,24 +1,33 @@
 ---
-# MinuteModem — CI: dev prereleases + tagged prod releases (Concourse)
-# ====================================================================
-# Two automated flows, sharing the same build/publish task scripts:
+# MinuteModem — CI: self-hosted image + dev prereleases + tagged releases
+# =======================================================================
+# Everything runs against the in-house Harbor registry
+# (harbor.admin.siliconiq.com, HTTPS via the SiliconIQ Root CA, Garage S3
+# backend). Nothing here pulls or pushes to docker.io except the base OS layer
+# that buildkit fetches for `FROM debian:trixie-slim`.
 #
-#   dev-prerelease   commit to `dev`      -> build -> GitHub *prerelease*
+# Three flows:
+#
+#   build-ci-image   change ci/Dockerfile or .tool-versions -> buildkit
+#                    (oci-build-task) rebuilds minutemodem-ci and pushes it to
+#                    Harbor. No more hand-building the CI image.
+#   dev-prerelease   commit to `dev`      -> build APK -> GitHub *prerelease*
 #                    (build-<UTC>-<sha>, keep-only-newest prune)
-#   tagged-release   push a v* tag on main -> build -> GitHub *Release*
+#   tagged-release   push a v* tag on main -> build APK -> GitHub *Release*
 #                    (named after the tag, marked latest, never pruned)
 #
-# Both auto-trigger. They share `serial_groups: [build]` so only one runs at a
-# time on the single ccis1 worker.
+# The two APK flows share `serial_groups: [build]` so only one runs at a time on
+# the single ccis1 worker.
 #
 # Vars:
 #   Non-secret (pass with `-l ci/vars.yml` at set-pipeline time):
 #     ((git_uri)) ((dev_branch)) ((release_branch)) ((release_tag_filter))
-#     ((ci_image_repo)) ((gh_repo))
+#     ((ci_image_repo)) ((oci_build_image_repo)) ((harbor_ca)) ((gh_repo))
 #   Secret (resolved from OpenBao via Concourse's Vault credential manager;
 #   store under concourse/main/minutemodem/):
 #     ((keystore_b64)) ((keystore_store_password)) ((keystore_key_alias))
 #     ((keystore_key_password)) ((gh_token))
+#     ((harbor_robot_user)) ((harbor_robot_token))
 #
 # See ci/README.md for the full one-time setup.
 
@@ -42,14 +51,73 @@ resources:
       branch: ((release_branch))          # e.g. main
       tag_filter: ((release_tag_filter))  # e.g. v[0-9]*
 
+  # Narrow view of the dev branch: only new versions when the CI image's
+  # definition changes, so build-ci-image doesn't fire on every app commit.
+  - name: repo-ci-image
+    type: git
+    icon: git
+    source:
+      uri: ((git_uri))
+      branch: ((dev_branch))
+      paths:
+        - ci/Dockerfile
+        - .tool-versions
+        - ci/patches/**
+
+  # The CI build image, hosted in Harbor. Pulled by the APK jobs; pushed by
+  # build-ci-image. Robot creds + the Root CA come from OpenBao/vars.
   - name: ci-image
     type: registry-image
     icon: docker
     source:
       repository: ((ci_image_repo))
       tag: latest
+      username: ((harbor_robot_user))
+      password: ((harbor_robot_token))
+      ca_certs:
+        - ((harbor_ca))
+
+  # buildkit-in-a-task image (mirrored into Harbor). Runs the oci build.
+  - name: oci-build-image
+    type: registry-image
+    icon: docker
+    source:
+      repository: ((oci_build_image_repo))
+      tag: latest
+      username: ((harbor_robot_user))
+      password: ((harbor_robot_token))
+      ca_certs:
+        - ((harbor_ca))
 
 jobs:
+  # ── rebuild the CI image from ci/Dockerfile and push it to Harbor ───────────
+  # Fires when the image definition changes. buildkit builds and pushes the
+  # image STRAIGHT to Harbor (see ci/tasks/build-ci-image.sh) — no giant local
+  # image.tar, which is what tripped `context deadline exceeded` on this
+  # multi-GB image. Only the base OS + dockerfile frontend come from docker.io.
+  - name: build-ci-image
+    serial: true
+    plan:
+      - in_parallel:
+          - get: repo-ci-image
+            trigger: true
+          - get: oci-build-image
+      - task: build-and-push
+        privileged: true
+        image: oci-build-image
+        config:
+          platform: linux
+          inputs:
+            - name: repo-ci-image
+          params:
+            IMAGE_REF: ((ci_image_repo)):latest
+            HARBOR_ROBOT_USER: ((harbor_robot_user))
+            HARBOR_ROBOT_TOKEN: ((harbor_robot_token))
+            HARBOR_CA: ((harbor_ca))
+          run:
+            path: sh
+            args: [repo-ci-image/ci/tasks/build-ci-image.sh]
+
   # ── dev branch commit -> prerelease ────────────────────────────────────────
   - name: dev-prerelease
     serial: true
