@@ -75,7 +75,22 @@ grep -q 'stage_empty_priv_otp_lib.*"hamlib_ex"' \
   deps/mob_dev/lib/mob_dev/native_build.ex \
   || { echo "!! mob_dev hamlib_ex staging patch did not apply"; exit 1; }
 
+# ── Tier 1 fast-path: consume the baked native layer if present ──────────────
+# On the native-base image, build-native-base already ran the hamlib cross-build
+# + build_all and staged the finished libminutemodem_mobile.so (+ libsqlite3_nif)
+# to /opt/mob-bake/jniLibs, with the OTP runtime baked into $HOME/.mob/cache.
+# Restore the .so into jniLibs/ (Gradle's CMake imports it) and skip the slow
+# native steps. Absent (running on plain ci-image) → full native build below.
+if [ -d /opt/mob-bake/jniLibs ]; then
+  echo "== native-base detected — restoring baked native layer (skipping hamlib + build_all) =="
+  mkdir -p android/app/src/main/jniLibs
+  cp -a /opt/mob-bake/jniLibs/. android/app/src/main/jniLibs/
+  ls -la android/app/src/main/jniLibs/*/ | sed -n '1,12p'
+  NATIVE_BAKED=1
+fi
+
 # Download the Android OTP runtime bundles (into $HOME/.mob/cache).
+# No-op on native-base (the cache is already baked in); a full download on ci-image.
 mix mob.install
 
 # android/local.properties is machine-specific + gitignored, and mob.install
@@ -91,6 +106,9 @@ mob.otp_release_arm32=${OTP_ARM32:-$OTP}
 mob.mob_dir=$PWD/deps/mob
 EOF
 echo "--- android/local.properties ---"; cat android/local.properties
+
+# ── Full native build — plain ci-image only; skipped when the layer was baked ─
+if [ -z "${NATIVE_BAKED:-}" ]; then
 
 # hamlib_nif's build.rs (cc-rs + bindgen, statically linking the cross-built
 # libhamlib.a) needs the NDK aarch64 toolchain + the hamlib install tree. mob.exs
@@ -134,6 +152,8 @@ test -f "$HL/out/aarch64/usr/local/lib/libhamlib.a" || { echo "!! libhamlib.a mi
 # build_all directly to skip mob.deploy's device-push/compat logic (no device
 # in CI). Halt on any {:error, _} so a NIF build failure fails the CI step.
 mix run --no-start -e 'r = MobDev.NativeBuild.build_all(platforms: [:android], slim: true); IO.inspect(r, label: "mob native build"); if r == false, do: System.halt(1)'
+
+fi  # NATIVE_BAKED — end of the full native build block
 
 # Produces the signed AAB (Gradle now finds the zig-built NIF objects).
 mix mob.release --android

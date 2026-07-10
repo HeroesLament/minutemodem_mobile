@@ -99,6 +99,20 @@ resources:
       ca_certs:
         - ((harbor_ca))
 
+  # Tier-1 native-base image (ci-image + Hamlib + OTP + prebuilt .so). Pulled by
+  # the APK jobs; pushed by build-native-base. build-apk.sh auto-detects the
+  # baked layer and skips the hamlib cross-build + build_all.
+  - name: native-base
+    type: registry-image
+    icon: docker
+    source:
+      repository: ((native_base_image_repo))
+      tag: latest
+      username: ((harbor_robot_user))
+      password: ((harbor_robot_token))
+      ca_certs:
+        - ((harbor_ca))
+
   # buildkit-in-a-task image (mirrored into Harbor). Runs the oci build.
   - name: oci-build-image
     type: registry-image
@@ -185,10 +199,10 @@ jobs:
       - in_parallel:
           - get: repo-dev
             trigger: true
-          - get: ci-image
+          - get: native-base
 
       - task: build-apk
-        image: ci-image
+        image: native-base
         file: repo-dev/ci/tasks/build-apk.yml
         input_mapping: { repo: repo-dev }
         params:
@@ -199,7 +213,7 @@ jobs:
           VERSION_MODE: timestamp
 
       - task: publish-release
-        image: ci-image
+        image: native-base
         file: repo-dev/ci/tasks/publish-release.yml
         input_mapping: { repo: repo-dev }
         params:
@@ -216,10 +230,10 @@ jobs:
       - in_parallel:
           - get: repo-release
             trigger: true
-          - get: ci-image
+          - get: native-base
 
       - task: build-apk
-        image: ci-image
+        image: native-base
         file: repo-release/ci/tasks/build-apk.yml
         input_mapping: { repo: repo-release }
         params:
@@ -230,7 +244,7 @@ jobs:
           VERSION_MODE: tag
 
       - task: publish-release
-        image: ci-image
+        image: native-base
         file: repo-release/ci/tasks/publish-release.yml
         input_mapping: { repo: repo-release }
         params:
