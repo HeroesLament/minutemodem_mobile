@@ -76,7 +76,7 @@ buildctl build \
   --opt filename=Dockerfile.native-base \
   --opt build-arg:CI_IMAGE="${CI_IMAGE}" \
   --import-cache "type=registry,ref=${CACHE_REF}" \
-  --export-cache "type=registry,ref=${CACHE_REF},mode=max" \
+  --export-cache "type=registry,ref=${CACHE_REF},mode=max,ignore-error=true" \
   --output "type=image,name=${IMAGE_REF},push=true"
 
 echo "== pushed ${IMAGE_REF} (cache: ${CACHE_REF}) =="
