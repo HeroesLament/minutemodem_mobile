@@ -47,6 +47,10 @@ cleanup() { rm -f "$KS" android/keystore.properties; }
 trap cleanup EXIT
 
 # --- build ------------------------------------------------------------------
+# Restore app-tier caches (Gradle + compiled _build) from Garage — best-effort,
+# never fails the build. native-base already carries ~/.hex + ~/.mix.
+bash "$SRC/ci/tasks/s3-cache.sh" restore "${CACHE_KEY:-app}" || true
+
 mix deps.get
 
 # ── Apply local mob patches (vendor-USB control transfer / PTT) ──────────────
@@ -190,3 +194,7 @@ git rev-parse HEAD > "$OUT/commit.txt"
 
 echo "== built ${VER} =="
 ls -la "$OUT"
+
+# Save app-tier caches back to Garage for the next (or a wiped) worker —
+# best-effort. Only reached on a successful build, so we never cache junk.
+bash "$SRC/ci/tasks/s3-cache.sh" save "${CACHE_KEY:-app}" || true

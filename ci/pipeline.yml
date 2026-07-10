@@ -23,12 +23,13 @@
 #   Non-secret (pass with `-l ci/vars.yml` at set-pipeline time):
 #     ((git_uri)) ((dev_branch)) ((release_branch)) ((release_tag_filter))
 #     ((ci_image_repo)) ((oci_build_image_repo)) ((native_base_image_repo))
-#     ((harbor_ca)) ((gh_repo))
+#     ((harbor_ca)) ((gh_repo)) ((garage_endpoint))
 #   Secret (resolved from OpenBao via Concourse's Vault credential manager;
 #   store under concourse/main/minutemodem/):
 #     ((keystore_b64)) ((keystore_store_password)) ((keystore_key_alias))
 #     ((keystore_key_password)) ((gh_token))
 #     ((harbor_robot_user)) ((harbor_robot_token))
+#     ((garage_cache_key_id)) ((garage_cache_key_secret))
 #
 # See ci/README.md for the full one-time setup.
 
@@ -211,6 +212,10 @@ jobs:
           KEYSTORE_KEY_ALIAS: ((keystore_key_alias))
           KEYSTORE_KEY_PASSWORD: ((keystore_key_password))
           VERSION_MODE: timestamp
+          GARAGE_ENDPOINT: ((garage_endpoint))
+          GARAGE_KEY_ID: ((garage_cache_key_id))
+          GARAGE_SECRET: ((garage_cache_key_secret))
+          CACHE_KEY: dev
 
       - task: publish-release
         image: native-base
@@ -242,6 +247,10 @@ jobs:
           KEYSTORE_KEY_ALIAS: ((keystore_key_alias))
           KEYSTORE_KEY_PASSWORD: ((keystore_key_password))
           VERSION_MODE: tag
+          GARAGE_ENDPOINT: ((garage_endpoint))
+          GARAGE_KEY_ID: ((garage_cache_key_id))
+          GARAGE_SECRET: ((garage_cache_key_secret))
+          CACHE_KEY: release
 
       - task: publish-release
         image: native-base

@@ -17,6 +17,13 @@ params:
   # "tag"       -> version = the git tag on this commit (prod releases, v1.2.3)
   # "timestamp" -> version = build-<UTC>-<sha>          (dev prereleases)
   VERSION_MODE: timestamp
+  # Best-effort Garage S3 artifact cache (Gradle + _build). All optional —
+  # absent creds/endpoint just skips caching (see ci/tasks/s3-cache.sh).
+  GARAGE_ENDPOINT:
+  GARAGE_KEY_ID:
+  GARAGE_SECRET:
+  CACHE_BUCKET: ci-artifact-cache
+  CACHE_KEY: app
 
 run:
   path: bash
