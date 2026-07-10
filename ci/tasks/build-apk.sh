@@ -57,11 +57,23 @@ mix deps.get
 # push it onto the freshly-fetched dep before any native build. Without it,
 # beam_jni.c references an undefined mob_deliver_vendor_usb_control_result and
 # libminutemodem_mobile.so fails to dlopen (UnsatisfiedLinkError at launch).
-export QUILT_PATCHES="$SRC/ci/patches/mob"
-( cd deps/mob && quilt push -a )
+( cd deps/mob && QUILT_PATCHES="$SRC/ci/patches/mob" quilt push -a )
 grep -q "pub export fn mob_deliver_vendor_usb_control_result" \
   deps/mob/android/jni/mob_nif.zig \
   || { echo "!! mob vendor-usb patch did not apply (control_result missing)"; exit 1; }
+
+# ── Apply local mob_dev patch (stage hamlib_ex as an on-device OTP lib) ──────
+# Pristine hex `mob_dev 0.5.6` stages exqlite/nx_eigen as OTP libs but NOT
+# hamlib_ex (a custom NIF dep). hamlib_ex's NIF does `use Rustler, otp_app:
+# :hamlib_ex`, so at load time Rustler calls :code.priv_dir(:hamlib_ex). Without
+# a staged lib/hamlib_ex-<vsn>/ dir that returns {:error, :bad_name}, the NIF
+# never attaches, and Hamlib.Nif.list_models/0 falls to its not-loaded stub —
+# the rig model picker shows "0 rigs". The local deps/mob_dev is patched to
+# stage it (both build_all + deploy paths); carry that delta here too.
+( cd deps/mob_dev && QUILT_PATCHES="$SRC/ci/patches/mob_dev" quilt push -a )
+grep -q 'stage_empty_priv_otp_lib.*"hamlib_ex"' \
+  deps/mob_dev/lib/mob_dev/native_build.ex \
+  || { echo "!! mob_dev hamlib_ex staging patch did not apply"; exit 1; }
 
 # Download the Android OTP runtime bundles (into $HOME/.mob/cache).
 mix mob.install

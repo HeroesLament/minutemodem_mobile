@@ -1,0 +1,55 @@
+--- a/lib/mob_dev/native_build.ex
++++ b/lib/mob_dev/native_build.ex
+@@ -125,6 +125,16 @@
+          :ok <- ensure_python_android_libs(python_android_bundle),
+          :ok <- install_nx_eigen_otp_lib(otp_arm64),
+          :ok <- install_nx_eigen_otp_lib(otp_arm32),
++         # Stage hamlib_ex as an on-device OTP library (empty priv/). Its
++         # NIF module does `use Rustler, otp_app: :hamlib_ex`, so at load
++         # time Rustler calls :code.priv_dir(:hamlib_ex)/native/hamlib_nif.
++         # Without an installed hamlib_ex-VSN/ lib dir that returns
++         # {:error, :bad_name} and the NIF never loads — the static-NIF
++         # table is bypassed because load_nif is never reached. Staging an
++         # empty-priv lib gives priv_dir a valid path; the static table then
++         # satisfies the load (the .so at that path doesn't need to exist).
++         :ok <- stage_empty_priv_otp_lib(otp_arm64, "hamlib_ex"),
++         :ok <- stage_empty_priv_otp_lib(otp_arm32, "hamlib_ex"),
+          :ok <- zig_build_android_objects(mob_dir, otp_arm64, otp_arm32),
+          :ok <- gradle_assemble(),
+          :ok <- adb_install_all(apk, bundle_id, device_id),
+@@ -2893,7 +2903,34 @@
+       manifest
+     ]
+ 
+-    case System.cmd("cargo", args, stderr_to_stdout: true, into: IO.stream()) do
++    # Per-NIF extra build environment from mob.exs. A NIF whose build.rs needs
++    # to find a cross-built native library (e.g. hamlib_nif locating the NDK
++    # static libhamlib.a via HAMLIB_INCLUDE_DIR / HAMLIB_LIB_DIR) declares it
++    # under `config :mob_dev, nif_build_env: %{<module> => %{"VAR" => "val"}}`.
++    # Without this, build.rs falls back to pkg-config and links the host copy.
++    #
++    # mob.exs is config data, not loaded into Application env — read it the
++    # same way mob.regen_driver_tab reads :static_nifs (Config.Reader, with an
++    # Application.get_env fallback for programmatic overrides in tests).
++    mob_exs_env =
++      if File.exists?("mob.exs") do
++        Config.Reader.read!("mob.exs")
++        |> Keyword.get(:mob_dev, [])
++        |> Keyword.get(:nif_build_env, Application.get_env(:mob_dev, :nif_build_env, %{}))
++      else
++        Application.get_env(:mob_dev, :nif_build_env, %{})
++      end
++
++    nif_env =
++      mob_exs_env
++      |> Map.get(String.to_atom(name), %{})
++      |> Enum.map(fn {k, v} -> {to_string(k), to_string(v)} end)
++
++    if nif_env != [] do
++      Mix.shell().info("      with env: #{Enum.map_join(nif_env, " ", fn {k, _} -> k end)}")
++    end
++
++    case System.cmd("cargo", args, stderr_to_stdout: true, into: IO.stream(), env: nif_env) do
+       {_, 0} ->
+         a = Path.expand("native/#{name}/target/#{target}/release/lib#{name}.a")
+ 
