@@ -49,6 +49,20 @@ trap cleanup EXIT
 # --- build ------------------------------------------------------------------
 mix deps.get
 
+# ── Apply local mob patches (vendor-USB control transfer / PTT) ──────────────
+# Pristine hex `mob 0.7.5` ships 6 of the 7 mob_deliver_vendor_usb_* exports.
+# The CP2102 control-transfer + PTT work adds the 7th (control_result) plus its
+# Elixir (lib/mob/vendor_usb.ex) and Erlang (src/mob_nif.erl) plumbing. Rather
+# than fork mob, carry the delta as a quilt patch stack (ci/patches/mob) and
+# push it onto the freshly-fetched dep before any native build. Without it,
+# beam_jni.c references an undefined mob_deliver_vendor_usb_control_result and
+# libminutemodem_mobile.so fails to dlopen (UnsatisfiedLinkError at launch).
+export QUILT_PATCHES="$SRC/ci/patches/mob"
+( cd deps/mob && quilt push -a )
+grep -q "pub export fn mob_deliver_vendor_usb_control_result" \
+  deps/mob/android/jni/mob_nif.zig \
+  || { echo "!! mob vendor-usb patch did not apply (control_result missing)"; exit 1; }
+
 # Download the Android OTP runtime bundles (into $HOME/.mob/cache).
 mix mob.install
 

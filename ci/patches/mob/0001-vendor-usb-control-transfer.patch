@@ -1,0 +1,432 @@
+--- a/android/jni/mob_nif.zig
++++ b/android/jni/mob_nif.zig
+@@ -292,6 +292,12 @@
+     vendor_usb_start_reading: jni.JMethodID = null,
+     vendor_usb_stop_reading: jni.JMethodID = null,
+     vendor_usb_close: jni.JMethodID = null,
++    vendor_usb_control_transfer: jni.JMethodID = null,
++    // ── Mob.AudioPcm (real-time PCM duplex: USB modem + BLE voice) ────────
++    audio_pcm_list_devices: jni.JMethodID = null,
++    audio_pcm_open: jni.JMethodID = null,
++    audio_pcm_write: jni.JMethodID = null,
++    audio_pcm_close: jni.JMethodID = null,
+     // ── Mob.Bt (Bluetooth Classic) — extracted to the mob_bluetooth plugin ──
+     // The bt method-id cache lives in the plugin NIF's own globals now.
+ };
+@@ -2524,6 +2530,70 @@
+     _ = erts.enif_send(null, &pid, env, msg);
+ }
+ 
++/// `mob_deliver_vendor_usb_control_result` — result of a control transfer.
++/// Builds `{:peripheral, :vendor_usb, :control_result, session, %{result, data}}`
++/// where `result` is the controlTransfer() return (bytes transferred, or
++/// negative on error) and `data` is the read buffer (empty for host->device).
++pub export fn mob_deliver_vendor_usb_control_result(jpid: jni.JLong, session: c_int, result: c_int, bytes: ?[*]const u8, nbytes: usize) callconv(.c) void {
++    var pid = pidFromLong(jpid);
++    const env = erts.enif_alloc_env() orelse return;
++    defer erts.enif_free_env(env);
++
++    var db: erts.ErlNifBinary = undefined;
++    _ = erts.enif_alloc_binary(nbytes, &db);
++    if (nbytes > 0) {
++        if (bytes) |p| @memcpy(db.data[0..nbytes], p[0..nbytes]);
++    }
++
++    const keys = [_]erts.ERL_NIF_TERM{
++        erts.atom(env, "result"),
++        erts.atom(env, "data"),
++    };
++    const vals = [_]erts.ERL_NIF_TERM{
++        erts.enif_make_int(env, result),
++        erts.enif_make_binary(env, &db),
++    };
++    const map = erts.makeMap(env, &keys, &vals) orelse return;
++
++    const msg = erts.makeTuple(env, .{
++        erts.atom(env, "peripheral"),
++        erts.atom(env, "vendor_usb"),
++        erts.atom(env, "control_result"),
++        vendorUsbSessionTerm(env, session),
++        map,
++    });
++    _ = erts.enif_send(null, &pid, env, msg);
++}
++
++
++// ── Mob.AudioPcm delivery function ───────────────────────────────────────
++//
++// Called from beam_jni.c's Java_..._MobBridge_nativeDeliverAudioPcmData
++// thunk when the Kotlin capture thread has a PCM chunk. Builds
++// `{:audio_pcm, :data, session, binary}` and posts it to `pid`. Mirrors
++// mob_deliver_vendor_usb_data but with a single-domain 4-tuple shape (the
++// session integer already disambiguates the modem vs voice stream — Elixir
++// owns that mapping).
++pub export fn mob_deliver_audio_pcm_data(jpid: jni.JLong, session: c_int, bytes: ?[*]const u8, nbytes: usize) callconv(.c) void {
++    var pid = pidFromLong(jpid);
++    const env = erts.enif_alloc_env() orelse return;
++    defer erts.enif_free_env(env);
++
++    var db: erts.ErlNifBinary = undefined;
++    _ = erts.enif_alloc_binary(nbytes, &db);
++    if (nbytes > 0) {
++        if (bytes) |b| @memcpy(db.data[0..nbytes], b[0..nbytes]);
++    }
++
++    const msg = erts.makeTuple(env, .{
++        erts.atom(env, "audio_pcm"),
++        erts.atom(env, "data"),
++        erts.enif_make_int(env, session),
++        erts.enif_make_binary(env, &db),
++    });
++    _ = erts.enif_send(null, &pid, env, msg);
++}
++
+ // ── Capability NIFs (thin shims to Kotlin) ───────────────────────────────
+ 
+ export fn nif_request_permission(
+@@ -3210,6 +3280,199 @@
+     return erts.ok(env);
+ }
+ 
++// nif_vendor_usb_control_transfer/7 — generic USB control transfer.
++//
++// Carries the full UsbDeviceConnection.controlTransfer signature so all
++// device-specific protocols (CP2102 line-coding + RTS/DTR for PTT, etc.)
++// can be expressed app-side in Elixir without a per-chip native method.
++// argv: session, request_type, request, value, index, data (binary,
++// possibly empty), timeout_ms. The `data` bytes are the control-transfer
++// payload (host->device) or ignored buffer length hint (device->host:
++// Kotlin sizes the read buffer from data.length). Result (the
++// controlTransfer return + any read bytes) arrives async via
++// mob_deliver_vendor_usb_control_result. DIRTY_IO: the Kotlin side does a
++// synchronous blocking controlTransfer off a worker thread.
++export fn nif_vendor_usb_control_transfer(
++    env: ?*erts.ErlNifEnv,
++    argc: c_int,
++    argv: [*]const erts.ERL_NIF_TERM,
++) callconv(.c) erts.ERL_NIF_TERM {
++    _ = argc;
++    if (Bridge.vendor_usb_control_transfer == null) return vendorUsbUnsupported(env);
++    var session: c_int = 0;
++    if (erts.enif_get_int(env, argv[0], &session) == 0) return erts.badarg(env);
++    var request_type: c_int = 0;
++    if (erts.enif_get_int(env, argv[1], &request_type) == 0) return erts.badarg(env);
++    var request: c_int = 0;
++    if (erts.enif_get_int(env, argv[2], &request) == 0) return erts.badarg(env);
++    var value: c_int = 0;
++    if (erts.enif_get_int(env, argv[3], &value) == 0) return erts.badarg(env);
++    var index: c_int = 0;
++    if (erts.enif_get_int(env, argv[4], &index) == 0) return erts.badarg(env);
++    const bin = getBinOrIolist(env, argv[5]) orelse return erts.badarg(env);
++    var timeout_ms: c_int = 1000;
++    if (erts.enif_get_int(env, argv[6], &timeout_ms) == 0) return erts.badarg(env);
++
++    var pid: erts.ErlNifPid = undefined;
++    _ = erts.enif_self(env, &pid);
++
++    var attached: c_int = 0;
++    const jenv = get_jenv(&attached) orelse return erts.atom(env, "error");
++    defer detachIfAttached(attached);
++
++    // Copy the control-transfer payload into a fresh Java byte[] (may be
++    // zero-length — a value-only transfer like IFC_ENABLE / SET_MHS). Kotlin
++    // hands it to UsbDeviceConnection.controlTransfer and, for device->host
++    // requests, reads the response back into it.
++    const size: jni.JSize = @intCast(bin.size);
++    const jbytes = jni.newByteArray(jenv, size);
++    if (jbytes != null) {
++        if (size > 0) jni.setByteArrayRegion(jenv, jbytes, 0, size, @ptrCast(bin.data));
++        jenv.*.CallStaticVoidMethod.?(
++            jenv,
++            Bridge.cls,
++            Bridge.vendor_usb_control_transfer,
++            pidToJlong(pid),
++            @as(jni.JInt, session),
++            @as(jni.JInt, request_type),
++            @as(jni.JInt, request),
++            @as(jni.JInt, value),
++            @as(jni.JInt, index),
++            jbytes,
++            @as(jni.JInt, timeout_ms),
++        );
++        jni.deleteLocalRef(jenv, jbytes);
++    }
++    return erts.ok(env);
++}
++
++
++// ── Mob.AudioPcm NIFs ────────────────────────────────────────────────────
++//
++// Real-time PCM duplex bridge. Thin wrappers over MobBridge's
++// audio_pcm_* @JvmStatic methods. list_devices/open dispatch and return
++// :ok immediately; results arrive async via mob_deliver_file_result
++// ({audio_pcm, devices|opened, json}) and mob_deliver_audio_pcm_data
++// (streamed capture). write is DIRTY_IO (blocking AudioTrack.write off a
++// dirty scheduler). All four are optional — older MobBridge templates
++// without the PCM block short-circuit with :unsupported, mirroring the
++// vendor_usb stubs.
++
++fn audioPcmUnsupported(env: ?*erts.ErlNifEnv) erts.ERL_NIF_TERM {
++    var pid: erts.ErlNifPid = undefined;
++    _ = erts.enif_self(env, &pid);
++    const msg_env = erts.enif_alloc_env() orelse return erts.ok(env);
++    defer erts.enif_free_env(msg_env);
++    const msg = erts.makeTuple(msg_env, .{
++        erts.atom(msg_env, "audio_pcm"),
++        erts.atom(msg_env, "error"),
++        erts.atom(msg_env, "unsupported"),
++    });
++    _ = erts.enif_send(null, &pid, msg_env, msg);
++    return erts.ok(env);
++}
++
++// nif_audio_pcm_list_devices/0 — enumerate input+output devices. Takes no
++// args; MobBridge.audio_pcm_list_devices(J) gets only the caller pid.
++export fn nif_audio_pcm_list_devices(
++    env: ?*erts.ErlNifEnv,
++    argc: c_int,
++    argv: [*]const erts.ERL_NIF_TERM,
++) callconv(.c) erts.ERL_NIF_TERM {
++    _ = argc;
++    _ = argv;
++    if (Bridge.audio_pcm_list_devices == null) return audioPcmUnsupported(env);
++    var pid: erts.ErlNifPid = undefined;
++    _ = erts.enif_self(env, &pid);
++    var attached: c_int = 0;
++    const jenv = get_jenv(&attached) orelse return erts.atom(env, "error");
++    defer detachIfAttached(attached);
++    jenv.*.CallStaticVoidMethod.?(jenv, Bridge.cls, Bridge.audio_pcm_list_devices, pidToJlong(pid));
++    return erts.ok(env);
++}
++
++// nif_audio_pcm_open/1 — open a pinned duplex PCM stream from an opts JSON
++// binary (sample_rate, channels, record_device_id, play_device_id,
++// unprocessed, chunk_frames). Returns :ok; the session id arrives via the
++// {audio_pcm, opened, json} file-result event.
++export fn nif_audio_pcm_open(
++    env: ?*erts.ErlNifEnv,
++    argc: c_int,
++    argv: [*]const erts.ERL_NIF_TERM,
++) callconv(.c) erts.ERL_NIF_TERM {
++    _ = argc;
++    if (Bridge.audio_pcm_open == null) return audioPcmUnsupported(env);
++    const bin = getBinOrIolist(env, argv[0]) orelse return erts.badarg(env);
++    const json = binToCString(bin) orelse return erts.atom(env, "error");
++    defer freeCString(json);
++    var pid: erts.ErlNifPid = undefined;
++    _ = erts.enif_self(env, &pid);
++    return callBridgePidStr(env, Bridge.audio_pcm_open, pid, json);
++}
++
++// nif_audio_pcm_write/2 — enqueue PCM bytes to a session's AudioTrack.
++// DIRTY_IO: the Kotlin side runs AudioTrack.write off-thread, but the
++// byte[] marshalling + static call still want a dirty scheduler under
++// sustained TX. Mirrors vendor_usb_bulk_write.
++export fn nif_audio_pcm_write(
++    env: ?*erts.ErlNifEnv,
++    argc: c_int,
++    argv: [*]const erts.ERL_NIF_TERM,
++) callconv(.c) erts.ERL_NIF_TERM {
++    _ = argc;
++    if (Bridge.audio_pcm_write == null) return audioPcmUnsupported(env);
++    var session: c_int = 0;
++    if (erts.enif_get_int(env, argv[0], &session) == 0) return erts.badarg(env);
++    const bin = getBinOrIolist(env, argv[1]) orelse return erts.badarg(env);
++
++    var pid: erts.ErlNifPid = undefined;
++    _ = erts.enif_self(env, &pid);
++
++    var attached: c_int = 0;
++    const jenv = get_jenv(&attached) orelse return erts.atom(env, "error");
++    defer detachIfAttached(attached);
++
++    const size: jni.JSize = @intCast(bin.size);
++    const jbytes = jni.newByteArray(jenv, size);
++    if (jbytes != null) {
++        jni.setByteArrayRegion(jenv, jbytes, 0, size, @ptrCast(bin.data));
++        jenv.*.CallStaticVoidMethod.?(
++            jenv,
++            Bridge.cls,
++            Bridge.audio_pcm_write,
++            pidToJlong(pid),
++            @as(jni.JInt, session),
++            jbytes,
++        );
++        jni.deleteLocalRef(jenv, jbytes);
++    }
++    return erts.ok(env);
++}
++
++// nif_audio_pcm_close/1 — stop & release a session's streams.
++export fn nif_audio_pcm_close(
++    env: ?*erts.ErlNifEnv,
++    argc: c_int,
++    argv: [*]const erts.ERL_NIF_TERM,
++) callconv(.c) erts.ERL_NIF_TERM {
++    _ = argc;
++    if (Bridge.audio_pcm_close == null) return audioPcmUnsupported(env);
++    var session: c_int = 0;
++    if (erts.enif_get_int(env, argv[0], &session) == 0) return erts.badarg(env);
++
++    var attached: c_int = 0;
++    const jenv = get_jenv(&attached) orelse return erts.atom(env, "error");
++    defer detachIfAttached(attached);
++
++    jenv.*.CallStaticVoidMethod.?(
++        jenv,
++        Bridge.cls,
++        Bridge.audio_pcm_close,
++        @as(jni.JInt, session),
++    );
++    return erts.ok(env);
++}
++
+ // ── nif_load: cache all method IDs at BEAM startup ───────────────────────
+ 
+ /// Required-method helper. Returns false if the method isn't on the
+@@ -3317,6 +3580,13 @@
+     cacheOptional(jenv, "vendor_usb_start_reading", "(JII)V", &Bridge.vendor_usb_start_reading);
+     cacheOptional(jenv, "vendor_usb_stop_reading", "(I)V", &Bridge.vendor_usb_stop_reading);
+     cacheOptional(jenv, "vendor_usb_close", "(I)V", &Bridge.vendor_usb_close);
++    cacheOptional(jenv, "vendor_usb_control_transfer", "(JIIIII[BI)V", &Bridge.vendor_usb_control_transfer);
++
++    // Mob.AudioPcm - optional, same rationale as vendor_usb above.
++    cacheOptional(jenv, "audio_pcm_list_devices", "(J)V", &Bridge.audio_pcm_list_devices);
++    cacheOptional(jenv, "audio_pcm_open", "(JLjava/lang/String;)V", &Bridge.audio_pcm_open);
++    cacheOptional(jenv, "audio_pcm_write", "(JI[B)V", &Bridge.audio_pcm_write);
++    cacheOptional(jenv, "audio_pcm_close", "(I)V", &Bridge.audio_pcm_close);
+ 
+     // ── Mob.Bt (Bluetooth Classic) ───────────────────────────────────────
+     // Extracted to the `mob_bluetooth` plugin (tier-1). The bt method-id cache,
+@@ -3444,6 +3714,12 @@
+     .{ .name = "vendor_usb_start_reading", .arity = 2, .fptr = nif_vendor_usb_start_reading, .flags = 0 },
+     .{ .name = "vendor_usb_stop_reading", .arity = 1, .fptr = nif_vendor_usb_stop_reading, .flags = 0 },
+     .{ .name = "vendor_usb_close", .arity = 1, .fptr = nif_vendor_usb_close, .flags = 0 },
++    .{ .name = "vendor_usb_control_transfer", .arity = 7, .fptr = nif_vendor_usb_control_transfer, .flags = erts.ERL_NIF_DIRTY_JOB_IO_BOUND },
++    // Mob.AudioPcm (real-time PCM duplex)
++    .{ .name = "audio_pcm_list_devices", .arity = 0, .fptr = nif_audio_pcm_list_devices, .flags = 0 },
++    .{ .name = "audio_pcm_open", .arity = 1, .fptr = nif_audio_pcm_open, .flags = 0 },
++    .{ .name = "audio_pcm_write", .arity = 2, .fptr = nif_audio_pcm_write, .flags = erts.ERL_NIF_DIRTY_JOB_IO_BOUND },
++    .{ .name = "audio_pcm_close", .arity = 1, .fptr = nif_audio_pcm_close, .flags = 0 },
+     // ── Mob.Bt (Bluetooth Classic) — extracted to the mob_bluetooth plugin ──
+     // ── Mob.DNS (in-process IPv4 resolver via Bionic getaddrinfo) ────────
+     .{ .name = "resolve_ipv4", .arity = 1, .fptr = nif_resolve_ipv4, .flags = erts.ERL_NIF_DIRTY_JOB_IO_BOUND },
+--- a/lib/mob/vendor_usb.ex
++++ b/lib/mob/vendor_usb.ex
+@@ -253,6 +253,60 @@
+   end
+ 
+   @doc """
++  Issue a USB control transfer on endpoint 0 (the device's default control
++  pipe). This is the generic primitive underneath device-specific control
++  protocols — line coding, modem-handshake lines (RTS/DTR), vendor requests.
++  The framework stays device-agnostic: encode the `request_type`/`request`/
++  `value`/`index`/`data` for your chip in app-side code (e.g. a CP2102 or
++  FTDI module).
++
++  Arguments mirror `UsbDeviceConnection.controlTransfer/7`:
++    * `request_type` — bmRequestType. Bit 7 set (e.g. `0xC1`) means
++      device→host (a read); clear (e.g. `0x41`) means host→device.
++    * `request` — bRequest.
++    * `value` — wValue.
++    * `index` — wIndex.
++    * `data` — payload binary/iolist. For host→device this is the bytes to
++      send (often empty for value-only requests). For device→host its byte
++      size sizes the read buffer.
++
++  Options:
++    * `:timeout_ms` — transfer timeout (default `1000`).
++
++  Result:
++    * `{:peripheral, :vendor_usb, :control_result, session, %{result: n, data: binary}}`
++      where `result` is the controlTransfer return (bytes transferred, or
++      negative on error) and `data` is the bytes read (empty for
++      host→device requests).
++    * `{:peripheral, :vendor_usb, :error, session, reason}` — e.g.
++      `:no_session`, `:control_failed`.
++  """
++  @spec control_transfer(
++          Mob.Socket.t(),
++          session(),
++          non_neg_integer(),
++          non_neg_integer(),
++          non_neg_integer(),
++          non_neg_integer(),
++          iodata(),
++          keyword()
++        ) :: Mob.Socket.t()
++  def control_transfer(socket, session, request_type, request, value, index, data \\ <<>>, opts \\ [])
++      when is_integer(session) and is_integer(request_type) and is_integer(request) and
++             is_integer(value) and is_integer(index) do
++    bin = IO.iodata_to_binary(data)
++
++    if byte_size(bin) > @max_write_bytes do
++      send(self(), {:peripheral, :vendor_usb, :error, session, :payload_too_large})
++      socket
++    else
++      timeout = Keyword.get(opts, :timeout_ms, 1000)
++      :mob_nif.vendor_usb_control_transfer(session, request_type, request, value, index, bin, timeout)
++      socket
++    end
++  end
++
++  @doc """
+   Start a continuous read loop on the bulk IN endpoint.
+ 
+   After this call, every chunk read native-side is delivered as
+@@ -319,6 +373,14 @@
+     {:peripheral, :vendor_usb, :opened, session, device_from_map(:json.decode(json))}
+   end
+ 
++  # :control_result already arrives with a %{result, data} map payload built
++  # native-side — pass it through unchanged (kept explicit so the public
++  # event surface is documented in one place).
++  def normalize_message({:peripheral, :vendor_usb, :control_result, _session, payload} = msg)
++      when is_map(payload) do
++    msg
++  end
++
+   def normalize_message(other), do: other
+ 
+   defp device_from_map(map) when is_map(map) do
+--- a/src/mob_nif.erl
++++ b/src/mob_nif.erl
+@@ -99,6 +99,12 @@
+     vendor_usb_start_reading/2,
+     vendor_usb_stop_reading/1,
+     vendor_usb_close/1,
++    vendor_usb_control_transfer/7,
++    %% Real-time PCM duplex audio (Android; iOS returns :unsupported)
++    audio_pcm_list_devices/0,
++    audio_pcm_open/1,
++    audio_pcm_write/2,
++    audio_pcm_close/1,
+     %% Bluetooth Classic (Android; iOS returns :unsupported)
+     bt_list_paired/0,
+     bt_start_discovery/0,
+@@ -202,6 +208,12 @@
+     vendor_usb_start_reading/2,
+     vendor_usb_stop_reading/1,
+     vendor_usb_close/1,
++    vendor_usb_control_transfer/7,
++    %% Real-time PCM duplex audio (Android; iOS returns :unsupported)
++    audio_pcm_list_devices/0,
++    audio_pcm_open/1,
++    audio_pcm_write/2,
++    audio_pcm_close/1,
+     %% Bluetooth Classic
+     bt_list_paired/0,
+     bt_start_discovery/0,
+@@ -321,6 +333,12 @@
+ vendor_usb_start_reading(_Session, _ChunkBytes) -> erlang:nif_error(not_loaded).
+ vendor_usb_stop_reading(_Session) -> erlang:nif_error(not_loaded).
+ vendor_usb_close(_Session) -> erlang:nif_error(not_loaded).
++vendor_usb_control_transfer(_Session, _RequestType, _Request, _Value, _Index, _Data, _TimeoutMs) -> erlang:nif_error(not_loaded).
++
++audio_pcm_list_devices() -> erlang:nif_error(not_loaded).
++audio_pcm_open(_OptsJson) -> erlang:nif_error(not_loaded).
++audio_pcm_write(_Session, _Pcm) -> erlang:nif_error(not_loaded).
++audio_pcm_close(_Session) -> erlang:nif_error(not_loaded).
+ %% Bluetooth Classic
+ bt_list_paired() -> erlang:nif_error(not_loaded).
+ bt_start_discovery() -> erlang:nif_error(not_loaded).
