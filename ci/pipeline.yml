@@ -63,6 +63,7 @@ resources:
         - ci/Dockerfile
         - .tool-versions
         - ci/patches/**
+        - ci/tasks/build-ci-image.sh
 
   # The CI build image, hosted in Harbor. Pulled by the APK jobs; pushed by
   # build-ci-image. Robot creds + the Root CA come from OpenBao/vars.
