@@ -46,7 +46,40 @@ EOF
 cleanup() { rm -f "$KS" android/keystore.properties; }
 trap cleanup EXIT
 
+# --- resolve version early (the gradle build below bakes it into the APK) ----
+# The git tag / commit count drive the APK's own versionName + versionCode, not
+# just the artifact filename. Computed here (before the build) so it can be fed
+# to Gradle via android/local.properties (see below).
+#   tag       — prod release off a v* tag; VER = tag (v0.1.1),
+#               versionName = tag sans 'v' (0.1.1).
+#   timestamp — dev prerelease; VER = build-<UTC>-<sha> (default),
+#               versionName = git describe (e.g. 0.1.1-3-gabc123) or sha.
+#   versionCode = commit count — a monotonically increasing integer, which
+#               Android requires to accept an update over an older install.
+SHA="$(git rev-parse --short HEAD)"
+case "${VERSION_MODE:-timestamp}" in
+  tag)
+    VER="$(git describe --tags --exact-match 2>/dev/null || true)"
+    [ -n "$VER" ] || { echo "!! VERSION_MODE=tag but HEAD has no exact tag"; exit 1; }
+    APP_VERSION_NAME="${VER#v}"
+    ;;
+  *)
+    VER="build-$(date -u +%Y%m%d-%H%M%S)-${SHA}"
+    # Only describe against release tags (v*), not the build-* prerelease tags,
+    # so a dev versionName reads like 0.1.1-3-gabc123 rather than a build stamp.
+    APP_VERSION_NAME="$(git describe --tags --match 'v*' --always 2>/dev/null | sed 's/^v//')"
+    [ -n "$APP_VERSION_NAME" ] || APP_VERSION_NAME="0.0.0-dev+${SHA}"
+    ;;
+esac
+APP_VERSION_CODE="$(git rev-list --count HEAD)"
+export APP_VERSION_NAME APP_VERSION_CODE
+echo "== version: name=${APP_VERSION_NAME} code=${APP_VERSION_CODE} (VER=${VER}) =="
+
 # --- build ------------------------------------------------------------------
+# Restore app-tier caches (Gradle + compiled _build) from Garage — best-effort,
+# never fails the build. native-base already carries ~/.hex + ~/.mix.
+bash "$SRC/ci/tasks/s3-cache.sh" restore "${CACHE_KEY:-app}" || true
+
 mix deps.get
 
 # ── Apply local mob patches (vendor-USB control transfer / PTT) ──────────────
@@ -75,7 +108,22 @@ grep -q 'stage_empty_priv_otp_lib.*"hamlib_ex"' \
   deps/mob_dev/lib/mob_dev/native_build.ex \
   || { echo "!! mob_dev hamlib_ex staging patch did not apply"; exit 1; }
 
+# ── Tier 1 fast-path: consume the baked native layer if present ──────────────
+# On the native-base image, build-native-base already ran the hamlib cross-build
+# + build_all and staged the finished libminutemodem_mobile.so (+ libsqlite3_nif)
+# to /opt/mob-bake/jniLibs, with the OTP runtime baked into $HOME/.mob/cache.
+# Restore the .so into jniLibs/ (Gradle's CMake imports it) and skip the slow
+# native steps. Absent (running on plain ci-image) → full native build below.
+if [ -d /opt/mob-bake/jniLibs ]; then
+  echo "== native-base detected — restoring baked native layer (skipping hamlib + build_all) =="
+  mkdir -p android/app/src/main/jniLibs
+  cp -a /opt/mob-bake/jniLibs/. android/app/src/main/jniLibs/
+  ls -la android/app/src/main/jniLibs/*/ | sed -n '1,12p'
+  NATIVE_BAKED=1
+fi
+
 # Download the Android OTP runtime bundles (into $HOME/.mob/cache).
+# No-op on native-base (the cache is already baked in); a full download on ci-image.
 mix mob.install
 
 # android/local.properties is machine-specific + gitignored, and mob.install
@@ -89,8 +137,13 @@ sdk.dir=$ANDROID_SDK_ROOT
 mob.otp_release=$OTP
 mob.otp_release_arm32=${OTP_ARM32:-$OTP}
 mob.mob_dir=$PWD/deps/mob
+app.version_name=$APP_VERSION_NAME
+app.version_code=$APP_VERSION_CODE
 EOF
 echo "--- android/local.properties ---"; cat android/local.properties
+
+# ── Full native build — plain ci-image only; skipped when the layer was baked ─
+if [ -z "${NATIVE_BAKED:-}" ]; then
 
 # hamlib_nif's build.rs (cc-rs + bindgen, statically linking the cross-built
 # libhamlib.a) needs the NDK aarch64 toolchain + the hamlib install tree. mob.exs
@@ -135,6 +188,8 @@ test -f "$HL/out/aarch64/usr/local/lib/libhamlib.a" || { echo "!! libhamlib.a mi
 # in CI). Halt on any {:error, _} so a NIF build failure fails the CI step.
 mix run --no-start -e 'r = MobDev.NativeBuild.build_all(platforms: [:android], slim: true); IO.inspect(r, label: "mob native build"); if r == false, do: System.halt(1)'
 
+fi  # NATIVE_BAKED — end of the full native build block
+
 # Produces the signed AAB (Gradle now finds the zig-built NIF objects).
 mix mob.release --android
 
@@ -147,21 +202,8 @@ AAB="android/app/build/outputs/bundle/release/app-release.aab"
 
 test -f "$APK" || { echo "!! APK not found at $APK"; exit 1; }
 
-SHA="$(git rev-parse --short HEAD)"
-
-# Version source depends on the flow (see VERSION_MODE param):
-#   tag       — prod release off a v* tag; VER = the exact tag (e.g. v1.2.3).
-#   timestamp — dev prerelease; VER = build-<UTC>-<sha> (default).
-case "${VERSION_MODE:-timestamp}" in
-  tag)
-    VER="$(git describe --tags --exact-match 2>/dev/null || true)"
-    [ -n "$VER" ] || { echo "!! VERSION_MODE=tag but HEAD has no exact tag"; exit 1; }
-    ;;
-  *)
-    VER="build-$(date -u +%Y%m%d-%H%M%S)-${SHA}"
-    ;;
-esac
-
+# VER + SHA were resolved before the build (so the version could be baked into
+# the APK's versionName/versionCode); reuse them for artifact naming here.
 cp "$APK" "$OUT/minutemodem-${VER}.apk"
 [ -f "$AAB" ] && cp "$AAB" "$OUT/minutemodem-${VER}.aab" || echo "(no AAB — APK only)"
 
@@ -170,3 +212,7 @@ git rev-parse HEAD > "$OUT/commit.txt"
 
 echo "== built ${VER} =="
 ls -la "$OUT"
+
+# Save app-tier caches back to Garage for the next (or a wiped) worker —
+# best-effort. Only reached on a successful build, so we never cache junk.
+bash "$SRC/ci/tasks/s3-cache.sh" save "${CACHE_KEY:-app}" || true

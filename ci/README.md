@@ -10,31 +10,61 @@ tmpfile at build time and shreds it on exit.
 ## Layout
 
     ci/
-      Dockerfile               CI build image (toolchain + Android SDK + gh)
-      pipeline.yml             the manual build-and-release job
+      Dockerfile               ci-image (toolchain + Android SDK/NDK + gh)
+      Dockerfile.native-base   native-base = ci-image + baked Hamlib/OTP/.so
+      pipeline.yml             build-ci-image, build-native-base, dev/tagged jobs
       vars.example.yml         non-secret vars template -> copy to ci/vars.yml
+      MULTIPART-PLAN.md        the tiered-build plan + status
+      MOB-TIERED-CI.md         community write-up of the pattern
       tasks/
-        build-apk.yml/.sh      build the signed APK/AAB, stage in artifacts/
+        build-ci-image.sh      buildkit -> Harbor (ci-image)
+        native-base-bake.sh    steps 1-6 + stage jniLibs/*.so (runs in native-base)
+        build-native-base.sh   buildkit -> Harbor (native-base) + registry cache
+        build-apk.yml/.sh      build the signed APK/AAB (auto-detects native-base)
+        s3-cache.sh            best-effort Garage S3 cache (Gradle + _build)
         publish-release.yml/.sh  gh release create + upload
 
 ## How it fits together
 
-    [git repo] ─┐
-                ├─► build-apk  ─► artifacts/{apk,aab,version,commit} ─► publish-release ─► GitHub Release
-    [ci-image] ─┘        ▲                                                     ▲
-                         │ keystore_* from OpenBao                            │ gh_token from OpenBao
+Three tiers, each rebuilt only on its own inputs (see `MULTIPART-PLAN.md` for
+the full design, `MOB-TIERED-CI.md` for the pattern write-up):
+
+    build-ci-image ─► ci-image            (Erlang/Elixir/zig + Android SDK/NDK)
+                          │
+    build-native-base ─► native-base      (+ cross-built Hamlib + OTP + prebuilt .so)
+                          │
+    [repo] ─► dev-prerelease / tagged-release ─► APK ─► GitHub Release
+                   ▲ image: native-base — build-apk.sh restores the baked .so and
+                   │ skips the Hamlib cross-build + build_all.
+                   │ keystore_*/gh_token from OpenBao; Gradle/_build cache in Garage S3.
+
+A native change (`native/**`, `mix.lock`, `.tool-versions`, the mob_dev patch)
+fires `build-native-base`; an app-only commit runs just the app tier on the warm
+`native-base`.
 
 ## One-time setup
 
-### 1. Build & push the CI image
+### 1. The CI image (self-hosted in Harbor)
 
-Build context is the repo root (so the image can bake in `.tool-versions`):
+The CI build image lives in the in-house Harbor registry
+(`harbor.admin.siliconiq.com/minutemodem/minutemodem-ci`) and is **built by
+Concourse itself** — the `build-ci-image` job runs buildkit (`oci-build-task`)
+over `ci/Dockerfile` and pushes the result to Harbor. It fires automatically
+whenever `ci/Dockerfile`, `.tool-versions`, or `ci/patches/**` change, so you
+never hand-build it again.
 
-    docker build -t docker.io/YOURUSER/minutemodem-ci:latest -f ci/Dockerfile .
-    docker push  docker.io/YOURUSER/minutemodem-ci:latest
+The first build is slow — it compiles Erlang from source and pulls the Android
+NDK. Everything after that reuses buildkit's cache.
 
-The first build is slow — it compiles Erlang 29.0 from source and pulls the
-Android NDK. Rebuild it only when `.tool-versions` or the SDK/NDK pins change.
+Bootstrap (once, so the APK jobs have an image to pull before the first
+`build-ci-image` run — or just trigger `build-ci-image` first):
+
+    # Seed Harbor from an existing image, or let build-ci-image populate it.
+    fly -t home trigger-job -j minutemodem/build-ci-image --watch
+
+Harbor also holds a mirror of the buildkit image the job runs in
+(`minutemodem/oci-build-task`). The only thing still pulled from docker.io is
+the `FROM debian:trixie-slim` base layer that buildkit fetches.
 
 > The Elixir pin (1.19.5) must match the device runtime. A newer host Elixir
 > makes Ecto emit `Enum.__in__/2`, which the on-device 1.19.5 runtime doesn't
@@ -64,6 +94,15 @@ for this team/pipeline (`concourse/<team>/<pipeline>/<name>`, default team
 
     # Only if the repo is private — SSH deploy key for the git resource:
     bao kv put concourse/main/minutemodem/git_ssh_key            value=@/path/to/deploy_key
+
+    # Harbor robot account (project 'minutemodem', pull+push) for the
+    # registry-image resources. Create it in Harbor, then:
+    bao kv put concourse/main/minutemodem/harbor_robot_user      value='robot$minutemodem+ci'
+    bao kv put concourse/main/minutemodem/harbor_robot_token     value='<robot-secret>'
+
+The Root CA that signs Harbor's TLS cert is **not** secret — it lives in
+`ci/vars.yml` as `harbor_ca:` (a PEM block scalar) so the registry-image
+resource can verify Harbor over HTTPS.
 
 If your OpenBao KV mount name isn't `concourse`, point Concourse's
 `CONCOURSE_VAULT_PATH_PREFIX` at whatever you used.

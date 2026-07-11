@@ -1,12 +1,32 @@
 # Non-secret pipeline vars. Copy to ci/vars.yml (gitignored) and fill in.
 #   fly -t home set-pipeline -p minutemodem -c ci/pipeline.yml -l ci/vars.yml
 #
-# Secrets (keystore_*, gh_token, git_ssh_key) do NOT go here — they resolve
-# from OpenBao via Concourse's Vault credential manager. See README.md.
+# Secrets do NOT go here — they resolve from OpenBao via Concourse's Vault
+# credential manager (concourse/main/minutemodem/*):
+#   keystore_b64, keystore_store_password, keystore_key_alias,
+#   keystore_key_password, gh_token, harbor_robot_user, harbor_robot_token
+# See README.md.
 
 git_uri: https://github.com/HeroesLament/minutemodem_mobile.git
 dev_branch: dev                 # commits here -> prerelease
 release_branch: main            # v* tags here -> prod Release
 release_tag_filter: 'v[0-9]*'   # glob: v1.2.3, v0.7.5, …
-ci_image_repo: docker.io/YOURUSER/minutemodem-ci
+
+# In-house Harbor registry. minutemodem-ci is built + pushed by the
+# build-ci-image job; oci-build-task is the buildkit image that job runs in.
+ci_image_repo: harbor.example.lan/minutemodem/minutemodem-ci
+oci_build_image_repo: harbor.example.lan/minutemodem/oci-build-task
+native_base_image_repo: harbor.example.lan/minutemodem/minutemodem-native-base
+
 gh_repo: HeroesLament/minutemodem_mobile
+
+# Garage (or any S3) endpoint for the best-effort app-tier artifact cache.
+# Creds are the garage_cache_key_id / garage_cache_key_secret secrets in OpenBao.
+garage_endpoint: http://garage.example.lan:3900
+
+# Root CA that signed the Harbor TLS cert (public cert — paste the PEM).
+# Lets the registry-image resource verify Harbor over HTTPS.
+harbor_ca: |
+  -----BEGIN CERTIFICATE-----
+  ...paste your registry's root CA cert here...
+  -----END CERTIFICATE-----

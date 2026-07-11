@@ -1,24 +1,35 @@
 ---
-# MinuteModem — CI: dev prereleases + tagged prod releases (Concourse)
-# ====================================================================
-# Two automated flows, sharing the same build/publish task scripts:
+# MinuteModem — CI: self-hosted image + dev prereleases + tagged releases
+# =======================================================================
+# Everything runs against the in-house Harbor registry
+# (harbor.admin.siliconiq.com, HTTPS via the SiliconIQ Root CA, Garage S3
+# backend). Nothing here pulls or pushes to docker.io except the base OS layer
+# that buildkit fetches for `FROM debian:trixie-slim`.
 #
-#   dev-prerelease   commit to `dev`      -> build -> GitHub *prerelease*
+# Three flows:
+#
+#   build-ci-image   change ci/Dockerfile or .tool-versions -> buildkit
+#                    (oci-build-task) rebuilds minutemodem-ci and pushes it to
+#                    Harbor. No more hand-building the CI image.
+#   dev-prerelease   commit to `dev`      -> build APK -> GitHub *prerelease*
 #                    (build-<UTC>-<sha>, keep-only-newest prune)
-#   tagged-release   push a v* tag on main -> build -> GitHub *Release*
+#   tagged-release   push a v* tag on main -> build APK -> GitHub *Release*
 #                    (named after the tag, marked latest, never pruned)
 #
-# Both auto-trigger. They share `serial_groups: [build]` so only one runs at a
-# time on the single ccis1 worker.
+# The two APK flows share `serial_groups: [build]` so only one runs at a time on
+# the single ccis1 worker.
 #
 # Vars:
 #   Non-secret (pass with `-l ci/vars.yml` at set-pipeline time):
 #     ((git_uri)) ((dev_branch)) ((release_branch)) ((release_tag_filter))
-#     ((ci_image_repo)) ((gh_repo))
+#     ((ci_image_repo)) ((oci_build_image_repo)) ((native_base_image_repo))
+#     ((harbor_ca)) ((gh_repo)) ((garage_endpoint))
 #   Secret (resolved from OpenBao via Concourse's Vault credential manager;
 #   store under concourse/main/minutemodem/):
 #     ((keystore_b64)) ((keystore_store_password)) ((keystore_key_alias))
 #     ((keystore_key_password)) ((gh_token))
+#     ((harbor_robot_user)) ((harbor_robot_token))
+#     ((garage_cache_key_id)) ((garage_cache_key_secret))
 #
 # See ci/README.md for the full one-time setup.
 
@@ -31,25 +42,159 @@ resources:
       uri: ((git_uri))
       branch: ((dev_branch))              # e.g. dev
 
-  # Release branch — only commits carrying a matching tag produce a version,
-  # and the resource checks out that tag. `tag_filter` is scoped to
-  # ((release_branch)) so a v* tag on a feature branch won't fire a release.
+  # Release tags — a new version appears for each tag matching the filter, and
+  # the resource checks out that tag. NOTE: `tag_filter` is intentionally NOT
+  # paired with `branch:` — the git resource does a single-branch fetch when a
+  # branch is pinned and never fetches tag refs, so `branch` + `tag_filter`
+  # detects nothing. Tag-only detection is the canonical release trigger. The
+  # release flow only ever puts v* tags on `main` (via a --no-ff merge), so
+  # tag-only is the same guard in practice.
   - name: repo-release
     type: git
     icon: git
     source:
       uri: ((git_uri))
-      branch: ((release_branch))          # e.g. main
       tag_filter: ((release_tag_filter))  # e.g. v[0-9]*
 
+  # Narrow view of the dev branch: only new versions when the CI image's
+  # definition changes, so build-ci-image doesn't fire on every app commit.
+  - name: repo-ci-image
+    type: git
+    icon: git
+    source:
+      uri: ((git_uri))
+      branch: ((dev_branch))
+      paths:
+        - ci/Dockerfile
+        - .tool-versions
+        - ci/patches/**
+        - ci/tasks/build-ci-image.sh
+
+  # Native inputs only — build-native-base fires when the slow native layer
+  # (NIFs, Hamlib/dep pins, OTP/zig toolchain, the native bake) changes, not on
+  # every app commit.
+  - name: repo-native
+    type: git
+    icon: git
+    source:
+      uri: ((git_uri))
+      branch: ((dev_branch))
+      paths:
+        - native/**
+        - mob.exs
+        - mix.lock
+        - .tool-versions
+        - android/app/src/main/jni/**
+        - ci/patches/**
+        - ci/Dockerfile.native-base
+        - ci/tasks/native-base-bake.sh
+        - ci/tasks/build-native-base.sh
+
+  # The CI build image, hosted in Harbor. Pulled by the APK jobs; pushed by
+  # build-ci-image. Robot creds + the Root CA come from OpenBao/vars.
   - name: ci-image
     type: registry-image
     icon: docker
     source:
       repository: ((ci_image_repo))
       tag: latest
+      username: ((harbor_robot_user))
+      password: ((harbor_robot_token))
+      ca_certs:
+        - ((harbor_ca))
+
+  # Tier-1 native-base image (ci-image + Hamlib + OTP + prebuilt .so). Pulled by
+  # the APK jobs; pushed by build-native-base. build-apk.sh auto-detects the
+  # baked layer and skips the hamlib cross-build + build_all.
+  - name: native-base
+    type: registry-image
+    icon: docker
+    source:
+      repository: ((native_base_image_repo))
+      tag: latest
+      username: ((harbor_robot_user))
+      password: ((harbor_robot_token))
+      ca_certs:
+        - ((harbor_ca))
+
+  # buildkit-in-a-task image (mirrored into Harbor). Runs the oci build.
+  - name: oci-build-image
+    type: registry-image
+    icon: docker
+    source:
+      repository: ((oci_build_image_repo))
+      tag: latest
+      username: ((harbor_robot_user))
+      password: ((harbor_robot_token))
+      ca_certs:
+        - ((harbor_ca))
 
 jobs:
+  # ── rebuild the CI image from ci/Dockerfile and push it to Harbor ───────────
+  # Fires when the image definition changes. buildkit builds and pushes the
+  # image STRAIGHT to Harbor (see ci/tasks/build-ci-image.sh) — no giant local
+  # image.tar, which is what tripped `context deadline exceeded` on this
+  # multi-GB image. Only the base OS + dockerfile frontend come from docker.io.
+  - name: build-ci-image
+    serial: true
+    plan:
+      - in_parallel:
+          - get: repo-ci-image
+            trigger: true
+          - get: oci-build-image
+      - task: build-and-push
+        privileged: true
+        image: oci-build-image
+        config:
+          platform: linux
+          inputs:
+            - name: repo-ci-image
+          caches:
+            - path: buildkit-cache     # persists buildkit's layer cache
+          params:
+            IMAGE_REF: ((ci_image_repo)):latest
+            HARBOR_ROBOT_USER: ((harbor_robot_user))
+            HARBOR_ROBOT_TOKEN: ((harbor_robot_token))
+            HARBOR_CA: ((harbor_ca))
+          run:
+            path: sh
+            args: [repo-ci-image/ci/tasks/build-ci-image.sh]
+
+  # ── bake the slow native layer into minutemodem-native-base ─────────────────
+  # Tier 1: FROM ci-image, adds the cross-built Hamlib + OTP runtime + the
+  # prebuilt libminutemodem_mobile.so (see ci/Dockerfile.native-base). Fires on
+  # native changes (repo-native) or a new ci-image. buildkit pushes straight to
+  # Harbor with a registry layer cache (:buildcache) so rebuilds are incremental
+  # and survive a worker reset. (No `passed:` on ci-image — build-ci-image pushes
+  # via buildkit, not a Concourse put, so the cascade rides on trigger instead.)
+  - name: build-native-base
+    serial: true
+    plan:
+      - in_parallel:
+          - get: repo-native
+            trigger: true
+          - get: ci-image
+            trigger: true
+          - get: oci-build-image
+      - task: build-and-push
+        privileged: true
+        image: oci-build-image
+        config:
+          platform: linux
+          inputs:
+            - name: repo-native
+          caches:
+            - path: buildkit-cache
+          params:
+            IMAGE_REF: ((native_base_image_repo)):latest
+            CI_IMAGE: ((ci_image_repo)):latest
+            HARBOR_ROBOT_USER: ((harbor_robot_user))
+            HARBOR_ROBOT_TOKEN: ((harbor_robot_token))
+            HARBOR_CA: ((harbor_ca))
+          run:
+            path: sh
+            args: [repo-native/ci/tasks/build-native-base.sh]
+
   # ── dev branch commit -> prerelease ────────────────────────────────────────
   - name: dev-prerelease
     serial: true
@@ -58,10 +203,10 @@ jobs:
       - in_parallel:
           - get: repo-dev
             trigger: true
-          - get: ci-image
+          - get: native-base
 
       - task: build-apk
-        image: ci-image
+        image: native-base
         file: repo-dev/ci/tasks/build-apk.yml
         input_mapping: { repo: repo-dev }
         params:
@@ -70,9 +215,13 @@ jobs:
           KEYSTORE_KEY_ALIAS: ((keystore_key_alias))
           KEYSTORE_KEY_PASSWORD: ((keystore_key_password))
           VERSION_MODE: timestamp
+          GARAGE_ENDPOINT: ((garage_endpoint))
+          GARAGE_KEY_ID: ((garage_cache_key_id))
+          GARAGE_SECRET: ((garage_cache_key_secret))
+          CACHE_KEY: dev
 
       - task: publish-release
-        image: ci-image
+        image: native-base
         file: repo-dev/ci/tasks/publish-release.yml
         input_mapping: { repo: repo-dev }
         params:
@@ -89,10 +238,10 @@ jobs:
       - in_parallel:
           - get: repo-release
             trigger: true
-          - get: ci-image
+          - get: native-base
 
       - task: build-apk
-        image: ci-image
+        image: native-base
         file: repo-release/ci/tasks/build-apk.yml
         input_mapping: { repo: repo-release }
         params:
@@ -101,9 +250,13 @@ jobs:
           KEYSTORE_KEY_ALIAS: ((keystore_key_alias))
           KEYSTORE_KEY_PASSWORD: ((keystore_key_password))
           VERSION_MODE: tag
+          GARAGE_ENDPOINT: ((garage_endpoint))
+          GARAGE_KEY_ID: ((garage_cache_key_id))
+          GARAGE_SECRET: ((garage_cache_key_secret))
+          CACHE_KEY: release
 
       - task: publish-release
-        image: ci-image
+        image: native-base
         file: repo-release/ci/tasks/publish-release.yml
         input_mapping: { repo: repo-release }
         params:

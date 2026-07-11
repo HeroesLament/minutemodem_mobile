@@ -1,0 +1,18 @@
+# Build context hygiene for ci/Dockerfile.native-base (context = repo root).
+# Everything here is either regenerated inside the bake or irrelevant to it.
+# Keeps .git and local build artifacts out of the COPY layer.
+.git
+.gitignore
+_build
+deps
+cover
+doc
+node_modules
+*.apk
+*.aab
+android/.gradle
+android/app/.cxx
+android/app/build
+android/app/src/main/jniLibs
+android/app/src/main/jni/.zig-cache
+zig-out

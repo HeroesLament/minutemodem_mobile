@@ -23,6 +23,14 @@ def mobOtpRelease     = localProps.getProperty('mob.otp_release',      System.ge
 def mobOtpReleaseArm32 = localProps.getProperty('mob.otp_release_arm32', System.getenv('MOB_ANDROID_OTP_RELEASE_ARM32') ?: mobOtpRelease)
 def mobDir             = localProps.getProperty('mob.mob_dir',           System.getenv('MOB_DIR')                       ?: '')
 
+// ── App version ───────────────────────────────────────────────────────────────
+// Driven by CI (ci/tasks/build-apk.sh) from the git tag / commit count via
+// android/local.properties, falling back to env vars, then to a static default
+// so a plain local `gradlew` still builds. versionCode MUST be a monotonically
+// increasing integer or Android refuses to install the update over an older one.
+def appVersionName = localProps.getProperty('app.version_name', System.getenv('APP_VERSION_NAME') ?: '0.1.0')
+def appVersionCode = Integer.parseInt(localProps.getProperty('app.version_code', System.getenv('APP_VERSION_CODE') ?: '1'))
+
 // Auto-detect ERTS version from the OTP release directory (arm64 is canonical).
 def ertsVsn = new File(mobOtpRelease).listFiles()
     ?.find { it.name.startsWith('erts-') }?.name ?: 'erts-17.0'
@@ -42,8 +50,8 @@ android {
         applicationId "com.example.minutemodem_mobile"
         minSdk 28
         targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        versionCode appVersionCode
+        versionName appVersionName
 
         // arm64-v8a only. The target device (OnePlus CPH2451) is arm64,
         // and hamlib_nif links the NDK-cross-built libhamlib.a which we only
