@@ -46,6 +46,35 @@ EOF
 cleanup() { rm -f "$KS" android/keystore.properties; }
 trap cleanup EXIT
 
+# --- resolve version early (the gradle build below bakes it into the APK) ----
+# The git tag / commit count drive the APK's own versionName + versionCode, not
+# just the artifact filename. Computed here (before the build) so it can be fed
+# to Gradle via android/local.properties (see below).
+#   tag       — prod release off a v* tag; VER = tag (v0.1.1),
+#               versionName = tag sans 'v' (0.1.1).
+#   timestamp — dev prerelease; VER = build-<UTC>-<sha> (default),
+#               versionName = git describe (e.g. 0.1.1-3-gabc123) or sha.
+#   versionCode = commit count — a monotonically increasing integer, which
+#               Android requires to accept an update over an older install.
+SHA="$(git rev-parse --short HEAD)"
+case "${VERSION_MODE:-timestamp}" in
+  tag)
+    VER="$(git describe --tags --exact-match 2>/dev/null || true)"
+    [ -n "$VER" ] || { echo "!! VERSION_MODE=tag but HEAD has no exact tag"; exit 1; }
+    APP_VERSION_NAME="${VER#v}"
+    ;;
+  *)
+    VER="build-$(date -u +%Y%m%d-%H%M%S)-${SHA}"
+    # Only describe against release tags (v*), not the build-* prerelease tags,
+    # so a dev versionName reads like 0.1.1-3-gabc123 rather than a build stamp.
+    APP_VERSION_NAME="$(git describe --tags --match 'v*' --always 2>/dev/null | sed 's/^v//')"
+    [ -n "$APP_VERSION_NAME" ] || APP_VERSION_NAME="0.0.0-dev+${SHA}"
+    ;;
+esac
+APP_VERSION_CODE="$(git rev-list --count HEAD)"
+export APP_VERSION_NAME APP_VERSION_CODE
+echo "== version: name=${APP_VERSION_NAME} code=${APP_VERSION_CODE} (VER=${VER}) =="
+
 # --- build ------------------------------------------------------------------
 # Restore app-tier caches (Gradle + compiled _build) from Garage — best-effort,
 # never fails the build. native-base already carries ~/.hex + ~/.mix.
@@ -108,6 +137,8 @@ sdk.dir=$ANDROID_SDK_ROOT
 mob.otp_release=$OTP
 mob.otp_release_arm32=${OTP_ARM32:-$OTP}
 mob.mob_dir=$PWD/deps/mob
+app.version_name=$APP_VERSION_NAME
+app.version_code=$APP_VERSION_CODE
 EOF
 echo "--- android/local.properties ---"; cat android/local.properties
 
@@ -171,21 +202,8 @@ AAB="android/app/build/outputs/bundle/release/app-release.aab"
 
 test -f "$APK" || { echo "!! APK not found at $APK"; exit 1; }
 
-SHA="$(git rev-parse --short HEAD)"
-
-# Version source depends on the flow (see VERSION_MODE param):
-#   tag       — prod release off a v* tag; VER = the exact tag (e.g. v1.2.3).
-#   timestamp — dev prerelease; VER = build-<UTC>-<sha> (default).
-case "${VERSION_MODE:-timestamp}" in
-  tag)
-    VER="$(git describe --tags --exact-match 2>/dev/null || true)"
-    [ -n "$VER" ] || { echo "!! VERSION_MODE=tag but HEAD has no exact tag"; exit 1; }
-    ;;
-  *)
-    VER="build-$(date -u +%Y%m%d-%H%M%S)-${SHA}"
-    ;;
-esac
-
+# VER + SHA were resolved before the build (so the version could be baked into
+# the APK's versionName/versionCode); reuse them for artifact naming here.
 cp "$APK" "$OUT/minutemodem-${VER}.apk"
 [ -f "$AAB" ] && cp "$AAB" "$OUT/minutemodem-${VER}.aab" || echo "(no AAB — APK only)"
 
