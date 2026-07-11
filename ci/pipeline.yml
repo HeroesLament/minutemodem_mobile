@@ -42,15 +42,18 @@ resources:
       uri: ((git_uri))
       branch: ((dev_branch))              # e.g. dev
 
-  # Release branch — only commits carrying a matching tag produce a version,
-  # and the resource checks out that tag. `tag_filter` is scoped to
-  # ((release_branch)) so a v* tag on a feature branch won't fire a release.
+  # Release tags — a new version appears for each tag matching the filter, and
+  # the resource checks out that tag. NOTE: `tag_filter` is intentionally NOT
+  # paired with `branch:` — the git resource does a single-branch fetch when a
+  # branch is pinned and never fetches tag refs, so `branch` + `tag_filter`
+  # detects nothing. Tag-only detection is the canonical release trigger. The
+  # release flow only ever puts v* tags on `main` (via a --no-ff merge), so
+  # tag-only is the same guard in practice.
   - name: repo-release
     type: git
     icon: git
     source:
       uri: ((git_uri))
-      branch: ((release_branch))          # e.g. main
       tag_filter: ((release_tag_filter))  # e.g. v[0-9]*
 
   # Narrow view of the dev branch: only new versions when the CI image's
